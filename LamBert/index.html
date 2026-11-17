@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cube Hop</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{margin:0;height:100%;background:#0e1224;color:#e8ecff;font-family:-apple-system,Helvetica,Arial,sans-serif}
+body{display:flex;align-items:center;justify-content:center}
+canvas{max-width:100%;max-height:100%;display:block}
+html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+</style></head><body>
+<canvas id="c" width="760" height="680"></canvas>
+<script>
+const N = 5;                       // size of the big cube: change this to try other sizes
+const WALK_STEPS = 100 * N * N * N; // random-walk steps used to build each level
+const LIVES = 3;
+
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const A = Math.min((W - 60) / (2 * N * 0.866), (H - 150) / (2 * N)); // cube edge in pixels
+const OX = W / 2, OY = H / 2 + 30;
+// Project grid point (x,y,z) to the screen. The viewer sits at large x, y, z.
+function P(x, y, z) { return [OX + (x - y) * A * 0.866, OY + (x + y) * A * 0.5 - z * A]; }
+
+let c, h, seen, pi, pj, hop = null, fall = null;
+let score = 0, lives = LIVES, level = 1, msg = '', pause = false, over = false;
+
+// c[i][j][k] = 1 if a cube is present. A cube needs its three neighbours toward the
+// back corner (i-1, j-1, k-1) present, or the imaginary floor/walls (index 0).
+function gen() {
+  c = Array.from({length: N}, () => Array.from({length: N}, () => Array(N).fill(1)));
+  let n = N * N * N;
+  const has = (i, j, k) => i >= 0 && j >= 0 && k >= 0 && i < N && j < N && k < N && c[i][j][k] === 1;
+  for (let s = 0; s < WALK_STEPS; s++) {
+    const i = Math.random() * N | 0, j = Math.random() * N | 0, k = Math.random() * N | 0;
+    if (c[i][j][k]) {
+      // remove only if fully visible (nothing in front of it) and at least one cube stays
+      if (n > 1 && !has(i + 1, j, k) && !has(i, j + 1, k) && !has(i, j, k + 1)) { c[i][j][k] = 0; n--; }
+    } else if ((i === 0 || has(i - 1, j, k)) && (j === 0 || has(i, j - 1, k)) && (k === 0 || has(i, j, k - 1))) {
+      c[i][j][k] = 1; n++;   // add only if fully supported
+    }
+  }
+  h = c.map(r => r.map(col => col.reduce((a, b) => a + b, 0)));
+  seen = h.map(r => r.map(() => false));
+}
+
+function place() {            // drop onto the top cube of the rearmost stack
+  pi = 0; pj = 0; hop = null; fall = null; rest = 0; queued = null; ride = null;
+}
+// A level is finishable if, for every pair of columns, one can be reached from the other
+// without falling (empty columns are fatal; hopping up 2 or more is blocked).
+function solvable() {
+  const cols = [];
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (h[i][j] > 0) cols.push([i, j]);
+  const id = (i, j) => i * N + j;
+  const R = Array.from({length: N * N}, () => Array(N * N).fill(false));
+  for (const [i, j] of cols) {
+    R[id(i, j)][id(i, j)] = true;
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const a = i + di, b = j + dj;
+      if (a >= 0 && b >= 0 && a < N && b < N && h[a][b] > 0 && h[a][b] - h[i][j] < 2) R[id(i, j)][id(a, b)] = true;
+    }
+  }
+  for (const [ki, kj] of cols) for (const [i, j] of cols) if (R[id(i, j)][id(ki, kj)])
+    for (const [a, b] of cols) if (R[id(ki, kj)][id(a, b)]) R[id(i, j)][id(a, b)] = true;
+  for (let x = 0; x < cols.length; x++) for (let y = x + 1; y < cols.length; y++) {
+    const u = id(cols[x][0], cols[x][1]), v = id(cols[y][0], cols[y][1]);
+    if (!R[u][v] && !R[v][u]) return false;
+  }
+  // The rear stack only counts once Q*bert hops back onto it, so some column must be able to reach it
+  return cols.some(([i, j]) => (i || j) && R[id(i, j)][0]);
+}
+// ---- Monsters: red balls, and purple balls that hatch into Coily ----
+const ENEMY_HOP = 0.25;      // seconds a monster hop takes
+const BALL_REST = 0.35, COILY_REST = 0.25;   // pause after each landing, in seconds
+const STRANDED_HOPS = 10;   // a Coily with no hop at all hops in place this many times, then jumps off
+const SPAWN_EVERY = 4;       // seconds between new balls
+const MAX_ENEMIES = 3;
+const COILY_MAX_UP = 1;      // highest hop up that Coily can make (Q*bert's limit is 1)
+let enemies = [], spawnT = 3;
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]], FWD = [[1, 0], [0, 1]];   // FWD = toward the viewer
+
+// Can a creature on column (i,j) hop by (di,dj) onto a cube column, hopping up at most `up`?
+function legal(i, j, di, dj, up) {
+  const a = i + di, b = j + dj;
+  return a >= 0 && b >= 0 && a < N && b < N && h[a][b] > 0 && h[a][b] - h[i][j] <= up;
+}
+
+function hopTo(e, d) {
+  e.hp = {fi: e.i, fj: e.j, ti: e.i + d[0], tj: e.j + d[1], ok: legal(e.i, e.j, d[0], d[1], 99), t: 0};
+}
+
+function spawn() {
+  const opts = FWD.filter(m => legal(0, 0, m[0], m[1], 99));
+  if (!opts.length) return;
+  const d = opts[Math.random() * opts.length | 0];
+  const kind = !enemies.some(e => e.kind !== 'red') && Math.random() < .35 ? 'purple' : 'red';
+  // the ball drops in a straight line from the top of the screen onto a column beside the rear stack
+  enemies.push({kind, i: d[0], j: d[1], hp: null, fall: null, wait: 0,
+                drop: {y: P(d[0] + .5, d[1] + .5, h[d[0]][d[1]])[1] + 60, v: 0}});
+}
+
+// Coily takes the first step of a shortest route to Q*bert that obeys Coily's own hop rules
+function chase(e) {
+  // While Q*bert rides a platform, Coily blindly keeps chasing the spot Q*bert jumped from
+  const lure = ride && ride.phase === 0, gi = lure ? ride.d.i : pi, gj = lure ? ride.d.j : pj;
+  const first = new Map([[e.i * N + e.j, null]]), q = [[e.i, e.j]];
+  for (let n = 0; n < q.length; n++) {
+    const [i, j] = q[n];
+    for (const d of DIRS) if (legal(i, j, d[0], d[1], COILY_MAX_UP)) {
+      const a = i + d[0], b = j + d[1], k = a * N + b;
+      if (first.has(k)) continue;
+      first.set(k, first.get(i * N + j) || d);
+      if (a === gi && b === gj) return first.get(k);
+      q.push([a, b]);
+    }
+  }
+  const opts = DIRS.filter(d => legal(e.i, e.j, d[0], d[1], COILY_MAX_UP));   // can't reach him: wander
+  return opts.length ? opts[Math.random() * opts.length | 0] : null;
+}
+
+function decide(e) {
+  let d;
+  if (e.kind === 'coily') {
+    if (ride && ride.phase === 0 && e.i === ride.d.i && e.j === ride.d.j) {   // blindly follows Q*bert off the edge
+      score += 500; hopTo(e, ride.d.dir); return;
+    }
+    d = chase(e);
+    if (!d) {   // stranded with no hop available: hop in place for a while, then jump off the edge
+      e.stuck = (e.stuck || 0) + 1;
+      d = e.stuck > STRANDED_HOPS ? FWD[Math.random() * 2 | 0] : [0, 0];
+    }
+  } else {
+    const opts = FWD.filter(m => legal(e.i, e.j, m[0], m[1], 99));
+    d = opts.length ? opts[Math.random() * opts.length | 0] : FWD[Math.random() * 2 | 0];   // no way on: hop off the edge
+  }
+  if (d) hopTo(e, d); else e.wait = .3;
+}
+
+const DEATH_PAUSE = 0.5;   // seconds everything freezes after Q*bert is hit
+let dying = 0;
+function die() {
+  if (dying > 0) return;
+  dying = DEATH_PAUSE; lives--;
+}
+
+function arrived(e) {
+  e.wait = e.kind === 'coily' ? COILY_REST : BALL_REST;
+  if (e.kind === 'purple' && !FWD.some(m => legal(e.i, e.j, m[0], m[1], 99))) e.hatch = 1.5;   // sits for 1.5 seconds, then hatches
+  if (e.i === pi && e.j === pj && !hop && !fall && !ride) die();
+}
+
+function updateEnemies(dt) {
+  if (pause || over) return;
+  spawnT -= dt;
+  if (spawnT <= 0) { if (enemies.length < MAX_ENEMIES) spawn(); spawnT = SPAWN_EVERY; }
+  const cur = enemies;
+  for (const e of cur) {
+    if (cur !== enemies) break;   // Q*bert was just hit
+    if (e.drop) {
+      e.drop.v += 3000 * dt; e.drop.y -= e.drop.v * dt;
+      if (e.drop.y <= 0) { e.drop = null; arrived(e); }
+    } else if (e.fall) {
+      e.fall.v += 2400 * dt; e.fall.y += e.fall.v * dt;
+      if (e.fall.y > H + 60) e.dead = true;
+    } else if (e.hp) {
+      e.hp.t += dt / ENEMY_HOP;
+      if (e.hp.t >= 1) {
+        if (e.hp.ok) { e.i = e.hp.ti; e.j = e.hp.tj; e.hp = null; arrived(e); }
+        else { const p = hopPos(e.hp, 1); e.fall = {x: p[0], y: p[1], v: 0, back: e.hp.ti < 0 || e.hp.tj < 0}; e.hp = null; }
+      }
+    } else if (e.hatch > 0) {
+      if ((e.hatch -= dt) <= 0) { e.kind = 'coily'; e.wait = COILY_REST; }
+    } else if ((e.wait -= dt) <= 0) decide(e);
+  }
+  if (cur === enemies) enemies = enemies.filter(e => !e.dead);
+}
+
+function enemyPos(e) {
+  if (e.drop) { const p = P(e.i + .5, e.j + .5, h[e.i][e.j]); return [p[0], p[1] - e.drop.y]; }
+  if (e.fall) return [e.fall.x, e.fall.y];
+  if (e.hp) return hopPos(e.hp, Math.min(1, e.hp.t));
+  return P(e.i + .5, e.j + .5, h[e.i][e.j]);
+}
+
+// A monster that has gone out through a rear wall is behind the cube structure, so the cubes hide it
+function behindWall(e) {
+  return !!((e.fall && e.fall.back) || (e.hp && !e.hp.ok && (e.hp.ti < 0 || e.hp.tj < 0) && e.hp.t >= .5));
+}
+
+function drawEnemy(e) {
+  const p = enemyPos(e), r = A * .26, x = p[0], y = p[1] - r;
+  g.fillStyle = e.kind === 'red' ? '#e63946' : '#8e44ad';
+  let ey = y;
+  if (e.kind === 'coily') {
+    for (let s = 0; s < 3; s++) { g.beginPath(); g.arc(x, y - s * r * .9, r * (s === 2 ? 1 : .85), 0, 7); g.fill(); }
+    ey = y - 1.8 * r;
+  } else { g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
+  g.fillStyle = '#fff';
+  for (const s of [-1, 1]) { g.beginPath(); g.arc(x + s * r * .38, ey - r * .1, r * .22, 0, 7); g.fill(); }
+}
+
+// ---- Levitating platforms: one beside each back edge, each usable once per level ----
+// Hopping through the rear wall from the right column lands on the platform, which then
+// carries Q*bert over the rear-most stack, vanishes, and lets him drop onto it.
+// Chance of a column is proportional to its distance k from the rear stack, so longer rides are likelier
+function pickFar(list) {
+  let r = Math.random() * list.reduce((a, k) => a + k, 0);
+  for (const k of list) { r -= k; if (r < 0) return k; }
+  return list[list.length - 1];
+}
+
+function makeDiscs() {
+  discs = [];
+  const left = [], right = [];
+  for (let k = 1; k < N; k++) { if (h[0][k] > 0) left.push(k); if (h[k][0] > 0) right.push(k); }
+  if (left.length) discs.push({i: 0, j: pickFar(left), dir: [-1, 0]});    // reached by hopping up-left
+  if (right.length) discs.push({i: pickFar(right), j: 0, dir: [0, -1]});  // reached by hopping up-right
+}
+
+function discPos(d) {   // point on the platform where Q*bert stands
+  return P(d.i + d.dir[0] + .5, d.j + d.dir[1] + .5, h[d.i][d.j] + DISC_LIFT);
+}
+
+function startRide(d) {
+  pi = 0; pj = 0; queued = null; rest = 0;
+  const from = discPos(d), r0 = P(.5, .5, h[0][0]), top = [r0[0], r0[1] - A];   // same path as ridePos()
+  const len = A + Math.hypot(top[0] - from[0], top[1] - (from[1] - A));          // up one cube-height, then across
+  ride = {d, t: 0, phase: 0, from, y: 0, v: 0, dur: len / (RIDE_SPEED * A)};   // constant speed: longer ride, longer time
+}
+
+function ridePos() {
+  const r0 = P(.5, .5, h[0][0]);
+  if (ride.phase === 1) return [r0[0], r0[1] - ride.y];   // dropping onto the rear stack
+  // Constant speed along the whole path (straight up, then straight across), with no pause at the corner
+  const t = Math.min(1, ride.t), mid = [ride.from[0], ride.from[1] - A], top = [r0[0], r0[1] - A];   // top = one cube-height above the rear stack
+  const len1 = A, len2 = Math.hypot(top[0] - mid[0], top[1] - mid[1]), s = t * (len1 + len2);
+  const lerp = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+  return s < len1 ? lerp(ride.from, mid, s / len1) : lerp(mid, top, (s - len1) / (len2 || 1));
+}
+
+function updateRide(dt) {
+  if (ride.phase === 0) {
+    ride.t += dt / ride.dur;
+    if (ride.t >= 1) { ride.phase = 1; ride.y = A; ride.v = 0; discs = discs.filter(x => x !== ride.d); }
+  } else {
+    ride.v += 3000 * dt; ride.y -= ride.v * dt;
+    if (ride.y <= 0) { ride = null; rest = QBERT_REST; landed(); }
+  }
+}
+
+function drawDisc(p) {
+  g.fillStyle = '#7a3b00'; g.beginPath(); g.ellipse(p[0], p[1] + 5, A * .62, A * .31, 0, 0, 7); g.fill();
+  g.fillStyle = '#ffbf47'; g.beginPath(); g.ellipse(p[0], p[1], A * .62, A * .31, 0, 0, 7); g.fill();
+  g.fillStyle = '#ff5d8f'; g.beginPath(); g.ellipse(p[0], p[1], A * .4, A * .2, 0, 0, 7); g.fill();
+}
+
+function newLevel() { do { gen(); } while (!solvable()); makeDiscs(); enemies = []; spawnT = 3; place(); pause = false; }
+
+const QBERT_HOP = 0.2, QBERT_REST = 0.2;   // hop time and pause after landing, in seconds
+let rest = 0, queued = null, ride = null, discs = [];
+const DISC_LIFT = 1 / 3, RIDE_SPEED = 3.1;   // platform floats this far above its column (in cubes); ride speed in cube-heights per second
+function move(di, dj) {
+  if (fall || pause || over || dying > 0 || ride) return;
+  if (hop || rest > 0) { queued = [di, dj]; return; }   // remember one swipe or key press
+  const ni = pi + di, nj = pj + dj;
+  const ok = ni >= 0 && nj >= 0 && ni < N && nj < N && h[ni][nj] > 0;
+  if (ok && h[ni][nj] - h[pi][pj] >= 2) return;   // too high to hop up: blocked
+  const disc = discs.find(d => d.i === pi && d.j === pj && d.dir[0] === di && d.dir[1] === dj);
+  hop = {fi: pi, fj: pj, ti: ni, tj: nj, ok, t: 0, disc, back: !disc && (ni < 0 || nj < 0)};
+}
+
+function hopPos(p, t) {
+  const hf = h[p.fi][p.fj], ht = p.ok ? h[p.ti][p.tj] : hf;
+  const a = P(p.fi + .5, p.fj + .5, hf), b = p.disc ? discPos(p.disc) : P(p.ti + .5, p.tj + .5, ht);
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t - Math.sin(Math.PI * t) * A * .6];
+}
+
+function landed() {
+  if (enemies.some(e => !e.hp && !e.fall && !e.drop && e.i === pi && e.j === pj)) { die(); return; }
+  if (!seen[pi][pj]) { seen[pi][pj] = true; score += 25; }
+  if (seen.every((r, i) => r.every((s, j) => s || h[i][j] === 0))) {
+    score += 100; pause = true; msg = 'Level clear!';
+    setTimeout(() => { level++; msg = ''; newLevel(); }, 1300);
+  }
+}
+
+function update(dt) {
+  if (dying > 0) {   // frozen for a moment after being hit, then the next life starts
+    dying -= dt;
+    if (dying <= 0) { dying = 0; enemies = []; spawnT = 3; if (lives <= 0) over = true; else place(); }
+    return;
+  }
+  updateEnemies(dt);
+  if (ride) { updateRide(dt); return; }
+  if (rest > 0) { rest -= dt; if (rest <= 0 && queued) { const q = queued; queued = null; move(q[0], q[1]); } }
+  if (hop) {
+    hop.t += dt / QBERT_HOP;
+    if (hop.t >= 1) {
+      if (hop.disc) { startRide(hop.disc); hop = null; }
+      else if (hop.ok) { pi = hop.ti; pj = hop.tj; hop = null; rest = QBERT_REST; landed(); }
+      else { const p = hopPos(hop, 1); fall = {x: p[0], y: p[1], v: 0, back: hop.back}; hop = null; }
+    }
+  } else if (fall) {
+    fall.v += 2400 * dt; fall.y += fall.v * dt;
+    if (fall.y > H + 60) { fall = null; lives--; if (lives <= 0) over = true; else place(); }
+  }
+}
+
+function poly(pts, fill) {
+  g.beginPath();
+  pts.forEach((p, n) => n ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]));
+  g.closePath(); g.fillStyle = fill; g.fill(); g.stroke();
+}
+
+function drawCubes() {
+  g.lineWidth = 1; g.strokeStyle = '#0b1020';
+  const list = [];
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) if (c[i][j][k]) list.push([i, j, k]);
+  list.sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));   // far to near
+  for (const [i, j, k] of list) {
+    const top = k === h[i][j] - 1;
+    poly([P(i, j, k + 1), P(i + 1, j, k + 1), P(i + 1, j + 1, k + 1), P(i, j + 1, k + 1)], top && seen[i][j] ? '#ffd54a' : '#5b8def');
+    poly([P(i + 1, j, k), P(i + 1, j + 1, k), P(i + 1, j + 1, k + 1), P(i + 1, j, k + 1)], '#24367a'); // right face
+    poly([P(i, j + 1, k), P(i + 1, j + 1, k), P(i + 1, j + 1, k + 1), P(i, j + 1, k + 1)], '#34498f'); // left face
+  }
+}
+
+function drawPlayer(x, y) {
+  const r = A * 0.3; y -= r * 0.9;
+  g.fillStyle = '#ff8a1f'; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+  g.fillStyle = '#ffb35c'; g.beginPath(); g.ellipse(x, y + r * .4, r * .6, r * .24, 0, 0, 7); g.fill();
+  for (const s of [-1, 1]) {
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(x + s * r * .4, y - r * .25, r * .26, 0, 7); g.fill();
+    g.fillStyle = '#000'; g.beginPath(); g.arc(x + s * r * .4, y - r * .2, r * .11, 0, 7); g.fill();
+  }
+}
+
+function draw() {
+  g.clearRect(0, 0, W, H);
+  // Past a rear wall he is behind the cube structure, so draw him before the cubes
+  const behind = (hop && hop.back && hop.t >= .5) || (fall && fall.back);
+  const drawMe = () => {
+    if (over) return;
+    if (ride) { const p = ridePos(); drawPlayer(p[0], p[1]); }
+    else if (hop) { const p = hopPos(hop, Math.min(1, hop.t)); drawPlayer(p[0], p[1]); }
+    else if (fall) drawPlayer(fall.x, fall.y);
+    else { const p = P(pi + .5, pj + .5, h[pi][pj]); drawPlayer(p[0], p[1]); }
+  };
+  if (behind) drawMe();
+  enemies.filter(behindWall).forEach(drawEnemy);
+  drawCubes();
+  discs.forEach(d => drawDisc(ride && ride.d === d && ride.phase === 0 ? ridePos() : discPos(d)));
+  enemies.filter(e => !behindWall(e)).forEach(drawEnemy);
+  if (!behind) drawMe();
+  g.fillStyle = '#e8ecff'; g.font = '20px -apple-system,Helvetica,Arial,sans-serif'; g.textAlign = 'left';
+  g.fillText('Score ' + score + '    Lives ' + Math.max(lives, 0) + '    Level ' + level, 20, 34);
+  g.textAlign = 'center'; g.fillStyle = '#8f9bd0'; g.font = '15px -apple-system,Helvetica,Arial,sans-serif';
+  g.fillText('Hop with Q E Z C, the arrow keys, or a diagonal swipe', W / 2, H - 16);
+  if (over || msg) {
+    g.fillStyle = '#ffd54a'; g.font = 'bold 40px -apple-system,Helvetica,Arial,sans-serif';
+    g.fillText(over ? 'Game over' : msg, W / 2, 70);
+    if (over) { g.font = '18px -apple-system,Helvetica,Arial,sans-serif'; g.fillText('Press Space or tap to play again', W / 2, 100); }
+  }
+}
+
+// Q = up-left, E = up-right, Z = down-left, C = down-right; arrows are rotated 45 degrees
+const K = {q: [-1, 0], e: [0, -1], c: [1, 0], z: [0, 1],
+           ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowRight: [1, 0], ArrowDown: [0, 1]};
+addEventListener('keydown', e => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k === ' ') {
+    e.preventDefault();
+    if (over) { over = false; score = 0; lives = LIVES; level = 1; newLevel(); }
+  } else if (K[k]) { e.preventDefault(); move(K[k][0], K[k][1]); }
+});
+
+// Touch: a diagonal swipe anywhere on the screen hops in that screen direction
+let sx = 0, sy = 0, swiped = false;
+addEventListener('touchstart', e => { const t = e.touches[0]; sx = t.clientX; sy = t.clientY; swiped = false; }, {passive: true});
+addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (swiped) return;
+  const t = e.touches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+  if (Math.hypot(dx, dy) < 24) return;
+  swiped = true;
+  const d = dy < 0 ? (dx < 0 ? [-1, 0] : [0, -1]) : (dx < 0 ? [0, 1] : [1, 0]);
+  move(d[0], d[1]);
+}, {passive: false});
+addEventListener('touchend', () => {
+  if (!swiped && over) { over = false; score = 0; lives = LIVES; level = 1; newLevel(); }   // tap to restart
+});
+
+newLevel();
+let last = performance.now();
+(function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  update(dt); draw(); requestAnimationFrame(frame);
+})(last);
+</script>
+</body></html>
