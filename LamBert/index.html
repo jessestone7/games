@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Cube Hop</title>
+<title>LamBert</title>
 <style>
 :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-html,body{margin:0;height:100%;background:#0e1224;color:#e8ecff;font-family:-apple-system,Helvetica,Arial,sans-serif}
+html,body{margin:0;height:100%;background:#bfe0fb;color:#1d3557;font-family:-apple-system,Helvetica,Arial,sans-serif}
 body{display:flex;align-items:center;justify-content:center}
 canvas{max-width:100%;max-height:100%;display:block}
 html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
 </style></head><body>
 <canvas id="c" width="760" height="680"></canvas>
 <script>
-const N = 7;                       // size of the big cube: change this to try other sizes
+const N = 6;                       // size of the big cube: change this to try other sizes
 const WALK_STEPS = 100 * N * N * N; // random-walk steps used to build each level
 const LIVES = 3;
 
@@ -46,6 +46,7 @@ function gen() {
 
 function place() {            // drop onto the top cube of the rearmost stack
   pi = 0; pj = 0; hop = null; fall = null; rest = 0; queued = null; ride = null;
+  facing = {away: false, right: true};
 }
 // A level is finishable if, for every pair of columns, one can be reached from the other
 // without falling (empty columns are fatal; hopping up 2 or more is blocked).
@@ -67,16 +68,19 @@ function solvable() {
     const u = id(cols[x][0], cols[x][1]), v = id(cols[y][0], cols[y][1]);
     if (!R[u][v] && !R[v][u]) return false;
   }
-  // The rear stack only counts once Q*bert hops back onto it, so some column must be able to reach it
+  // The rear stack only counts once LamBert hops back onto it, so some column must be able to reach it
   return cols.some(([i, j]) => (i || j) && R[id(i, j)][0]);
 }
-// ---- Monsters: red balls, and purple balls that hatch into Coily ----
+// ---- Monsters: red balls, and Wolfy in a badly made sheep costume (a woolly ball) ----
 const ENEMY_HOP = 0.25;      // seconds a monster hop takes
-const BALL_REST = 0.35, COILY_REST = 0.25;   // pause after each landing, in seconds
-const STRANDED_HOPS = 10;   // a Coily with no hop at all hops in place this many times, then jumps off
+const COSTUME_CHANCE = 0.2, COSTUME_BOOST = 0.2;   // chance of a costume ball, plus this much more for every red ball since the last costume
+let redsSinceCostume = 0;
+const POP_TIME = 0.45;   // seconds the wool puffs fly when Wolfy's costume comes off
+const BALL_REST = 0.35, WOLFY_REST = 0.25;   // pause after each landing, in seconds
+const STRANDED_HOPS = 10;   // a Wolfy with no hop at all hops in place this many times, then jumps off
 const SPAWN_EVERY = 4;       // seconds between new balls
 const MAX_ENEMIES = 3;
-const COILY_MAX_UP = 1;      // highest hop up that Coily can make (Q*bert's limit is 1)
+const WOLFY_MAX_UP = 1;      // highest hop up that Wolfy can make (LamBert's limit is 1)
 let enemies = [], spawnT = 3;
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]], FWD = [[1, 0], [0, 1]];   // FWD = toward the viewer
 
@@ -87,6 +91,7 @@ function legal(i, j, di, dj, up) {
 }
 
 function hopTo(e, d) {
+  if (d[0] || d[1]) e.face = {away: d[0] < 0 || d[1] < 0, right: d[1] < 0 || d[0] > 0};   // he turns to face the way he hops
   e.hp = {fi: e.i, fj: e.j, ti: e.i + d[0], tj: e.j + d[1], ok: legal(e.i, e.j, d[0], d[1], 99), t: 0};
 }
 
@@ -94,20 +99,25 @@ function spawn() {
   const opts = FWD.filter(m => legal(0, 0, m[0], m[1], 99));
   if (!opts.length) return;
   const d = opts[Math.random() * opts.length | 0];
-  const kind = !enemies.some(e => e.kind !== 'red') && Math.random() < .35 ? 'purple' : 'red';
+  const eligible = !enemies.some(e => e.kind !== 'red');   // only one costume ball or Wolfy at a time
+  let kind = 'red';
+  if (eligible) {   // the chance of a costume grows with every red ball since the last one, so the wait is never long
+    if (Math.random() < COSTUME_CHANCE + COSTUME_BOOST * redsSinceCostume) { kind = 'costume'; redsSinceCostume = 0; }
+    else redsSinceCostume++;
+  }
   // the ball drops in a straight line from the top of the screen onto a column beside the rear stack
   enemies.push({kind, i: d[0], j: d[1], hp: null, fall: null, wait: 0,
                 drop: {y: P(d[0] + .5, d[1] + .5, h[d[0]][d[1]])[1] + 60, v: 0}});
 }
 
-// Coily takes the first step of a shortest route to Q*bert that obeys Coily's own hop rules
+// Wolfy takes the first step of a shortest route to LamBert that obeys Wolfy's own hop rules
 function chase(e) {
-  // While Q*bert rides a platform, Coily blindly keeps chasing the spot Q*bert jumped from
+  // While LamBert rides a platform, Wolfy blindly keeps chasing the spot LamBert jumped from
   const lure = ride && ride.phase === 0, gi = lure ? ride.d.i : pi, gj = lure ? ride.d.j : pj;
   const first = new Map([[e.i * N + e.j, null]]), q = [[e.i, e.j]];
   for (let n = 0; n < q.length; n++) {
     const [i, j] = q[n];
-    for (const d of DIRS) if (legal(i, j, d[0], d[1], COILY_MAX_UP)) {
+    for (const d of DIRS) if (legal(i, j, d[0], d[1], WOLFY_MAX_UP)) {
       const a = i + d[0], b = j + d[1], k = a * N + b;
       if (first.has(k)) continue;
       first.set(k, first.get(i * N + j) || d);
@@ -115,14 +125,14 @@ function chase(e) {
       q.push([a, b]);
     }
   }
-  const opts = DIRS.filter(d => legal(e.i, e.j, d[0], d[1], COILY_MAX_UP));   // can't reach him: wander
+  const opts = DIRS.filter(d => legal(e.i, e.j, d[0], d[1], WOLFY_MAX_UP));   // can't reach him: wander
   return opts.length ? opts[Math.random() * opts.length | 0] : null;
 }
 
 function decide(e) {
   let d;
-  if (e.kind === 'coily') {
-    if (ride && ride.phase === 0 && e.i === ride.d.i && e.j === ride.d.j) {   // blindly follows Q*bert off the edge
+  if (e.kind === 'wolfy') {
+    if (ride && ride.phase === 0 && e.i === ride.d.i && e.j === ride.d.j) {   // blindly follows LamBert off the edge
       score += 500; hopTo(e, ride.d.dir); return;
     }
     d = chase(e);
@@ -137,7 +147,16 @@ function decide(e) {
   if (d) hopTo(e, d); else e.wait = .3;
 }
 
-const DEATH_PAUSE = 0.5;   // seconds everything freezes after Q*bert is hit
+// LamBert and a monster hopping toward each other's spots meet in mid-air, and he dies
+function checkSwap() {
+  if (!hop || hop.balloon || !hop.ok) return;
+  for (const e of enemies) {
+    const m = e.hp;
+    if (m && m.ok && m.fi === hop.ti && m.fj === hop.tj && m.ti === hop.fi && m.tj === hop.fj && m.t + hop.t >= 1) { die(); return; }
+  }
+}
+
+const DEATH_PAUSE = 0.5;   // seconds everything freezes after LamBert is hit
 let dying = 0;
 function die() {
   if (dying > 0) return;
@@ -145,8 +164,8 @@ function die() {
 }
 
 function arrived(e) {
-  e.wait = e.kind === 'coily' ? COILY_REST : BALL_REST;
-  if (e.kind === 'purple' && !FWD.some(m => legal(e.i, e.j, m[0], m[1], 99))) e.hatch = 1.5;   // sits for 1.5 seconds, then hatches
+  e.wait = e.kind === 'wolfy' ? WOLFY_REST : BALL_REST;
+  if (e.kind === 'costume' && !FWD.some(m => legal(e.i, e.j, m[0], m[1], 99))) e.hatch = 1.5;   // at the bottom it sits and shakes for 1.5 seconds, then the costume pops off
   if (e.i === pi && e.j === pj && !hop && !fall && !ride) die();
 }
 
@@ -156,7 +175,8 @@ function updateEnemies(dt) {
   if (spawnT <= 0) { if (enemies.length < MAX_ENEMIES) spawn(); spawnT = SPAWN_EVERY; }
   const cur = enemies;
   for (const e of cur) {
-    if (cur !== enemies) break;   // Q*bert was just hit
+    if (cur !== enemies) break;   // LamBert was just hit
+    if (e.pop > 0) e.pop -= dt;
     if (e.drop) {
       e.drop.v += 3000 * dt; e.drop.y -= e.drop.v * dt;
       if (e.drop.y <= 0) { e.drop = null; arrived(e); }
@@ -170,7 +190,7 @@ function updateEnemies(dt) {
         else { const p = hopPos(e.hp, 1); e.fall = {x: p[0], y: p[1], v: 0, back: e.hp.ti < 0 || e.hp.tj < 0}; e.hp = null; }
       }
     } else if (e.hatch > 0) {
-      if ((e.hatch -= dt) <= 0) { e.kind = 'coily'; e.wait = COILY_REST; }
+      if ((e.hatch -= dt) <= 0) { e.kind = 'wolfy'; e.wait = WOLFY_REST; e.pop = POP_TIME; }
     } else if ((e.wait -= dt) <= 0) decide(e);
   }
   if (cur === enemies) enemies = enemies.filter(e => !e.dead);
@@ -188,21 +208,112 @@ function behindWall(e) {
   return !!((e.fall && e.fall.back) || (e.hp && !e.hp.ok && (e.hp.ti < 0 || e.hp.tj < 0) && e.hp.t >= .5));
 }
 
+// ---- Wolfy: a gray wolf who turns to face the way he hops ----
+function drawWolfy(x, y, e) {   // (x, y) is the point where his feet touch
+  const f = e.face || {away: false, right: true}, dx = f.right ? 1 : -1, away = f.away;
+  const r = A * .5, FUR = '#7d8590', DARKF = '#4b525b', LIGHT = '#dfe3e8', PINK = '#e8a0ae';
+  let stretch = 0, lean = 0;
+  if (e.hp) { const t = Math.min(1, e.hp.t); stretch = .16 * Math.sin(Math.PI * t); lean = Math.cos(Math.PI * t); }
+  g.save(); g.translate(x, y); g.scale(1 - stretch * .6, 1 + stretch);
+  g.fillStyle = DARKF;   // legs
+  for (const s of [-1, 1]) { g.beginPath(); g.ellipse(s * r * .28 + dx * r * .08, -r * .38, r * .1, r * .38, 0, 0, 7); g.fill(); }   // long thin legs
+  const by = -r * 1.15;   // centre of the body
+  const body = () => {
+    g.beginPath(); g.ellipse(0, by, r * .58, r * .95, 0, 0, 7); g.fillStyle = FUR; g.fill();
+    if (!away) { g.beginPath(); g.ellipse(dx * r * .1, by + r * .2, r * .3, r * .6, 0, 0, 7); g.fillStyle = LIGHT; g.fill(); }   // narrow pale belly
+  };
+  const tail = () => {   // bushy tail with a pale tip
+    g.save(); g.translate(away ? dx * r * .1 : -dx * r * .6, away ? by + r * .55 : by + r * .15); g.rotate(away ? 0 : -dx * .7);
+    const tip = away ? 1 : -1;
+    g.beginPath(); g.ellipse(0, 0, r * .17, r * .55, 0, 0, 7); g.fillStyle = FUR; g.fill();
+    g.beginPath(); g.ellipse(0, tip * r * .38, r * .15, r * .2, 0, 0, 7); g.fillStyle = LIGHT; g.fill();
+    g.restore();
+  };
+  const hx = dx * r * .22, hy = by - r * (away ? .95 : .6), hr = r * .55;   // head (higher on screen when seen from behind)
+  const head = () => {
+    for (const s of [-1, 1]) {   // pointed ears
+      const ex = hx + s * hr * .6, ey = hy - hr * .55;
+      g.beginPath(); g.moveTo(ex - hr * .26, ey + hr * .3); g.lineTo(ex + s * hr * .1 + lean * s * hr * .08, ey - hr * 1.15); g.lineTo(ex + hr * .26, ey + hr * .3); g.closePath();
+      g.fillStyle = FUR; g.fill();
+      if (!away) { g.beginPath(); g.moveTo(ex - hr * .16, ey + hr * .25); g.lineTo(ex + s * hr * .08, ey - hr * .7); g.lineTo(ex + hr * .16, ey + hr * .25); g.closePath(); g.fillStyle = PINK; g.fill(); }
+    }
+    blob(hx, hy, hr, FUR);
+    if (!away) {
+      g.beginPath(); g.ellipse(hx + dx * hr * .55, hy + hr * .3, hr * .68, hr * .26, 0, 0, 7); g.fillStyle = LIGHT; g.fill();   // long snout
+      blob(hx + dx * hr * 1.15, hy + hr * .22, hr * .11, '#1b1620');   // nose
+      g.beginPath(); g.ellipse(hx + dx * hr * .8, hy + hr * .62, hr * .1, hr * .22, 0, 0, 7); g.fillStyle = PINK; g.fill();   // tongue hanging out: he is hungry
+      g.beginPath(); g.moveTo(hx + dx * hr * .95, hy + hr * .5); g.lineTo(hx + dx * hr * 1.05, hy + hr * .75); g.lineTo(hx + dx * hr * 1.13, hy + hr * .5); g.closePath(); g.fillStyle = '#ffffff'; g.fill();   // fang
+      const ex = hx + dx * hr * .15;
+      g.strokeStyle = DARKF; g.lineWidth = Math.max(1.5, hr * .12);
+      for (const s of [-1, 1]) {
+        const X = ex + s * hr * .38, Y = hy - hr * .15;
+        g.beginPath(); g.ellipse(X, Y, hr * .2, hr * .12, 0, 0, 7); g.fillStyle = '#ffd23f'; g.fill(); blob(X + dx * hr * .05, Y, hr * .07, '#1b1620');   // narrow eye
+        g.beginPath(); g.moveTo(X - s * hr * .24, Y - hr * .08); g.lineTo(X + s * hr * .24, Y - hr * .32); g.stroke();   // slanted brow
+      }
+    }
+  };
+  if (away) { head(); body(); tail(); } else { tail(); body(); head(); }   // from behind the body is nearer than the head
+  g.restore();
+}
+
+// Wolfy's "sheep costume": a lumpy ball of wool with crooked ears and two mismatched eyes stuck on.
+// It shakes harder and harder just before it pops off.
+function drawCostume(x, y, e) {   // (x, y) is the point where it touches the cube
+  const r = A * .3;
+  let ox = 0, rot = 0;
+  if (e.hatch > 0) { const k = 1 - e.hatch / 1.5, t = performance.now(); ox = Math.sin(t / 18) * (1 + 3 * k); rot = Math.sin(t / 23) * .12 * k; }
+  g.save(); g.translate(x + ox, y - r * .95); g.rotate(rot);
+  // ears stuck on crookedly, behind the wool: different sizes, colors and angles (side 1 = droops, -1 = sticks up)
+  for (const [ex, ey, rx, ry, ang, side, col] of [[-1.0, -.1, .26, .5, .6, 1, '#4a3f48'], [.95, -.6, .2, .4, .5, -1, '#6e5f6a']]) {
+    g.save(); g.translate(ex * r, ey * r); g.rotate(ang);
+    g.beginPath(); g.ellipse(0, side * ry * r * .6, rx * r, ry * r, 0, 0, 7); g.fillStyle = col; g.fill();
+    if (side > 0) { g.beginPath(); g.ellipse(0, side * ry * r * .6, rx * r * .45, ry * r * .65, 0, 0, 7); g.fillStyle = '#e9a3b5'; g.fill(); }
+    g.restore();
+  }
+  for (const [px, py, pr] of [[-.55, .25, .55], [.55, .2, .55], [-.35, -.5, .55], [.4, -.55, .5], [0, .5, .55], [0, 0, .9]]) blob(px * r, py * r, pr * r, '#ffffff', '#c9c2d0');   // lumpy wool
+  const eye = (ex, ey, er, px, py) => { blob(ex * r, ey * r, er * r, '#ffffff', '#8a8394'); blob((ex + px) * r, (ey + py) * r, er * r * .5, '#1b1620'); };
+  eye(-.32, -.15, .3, .08, .06);   // two mismatched eyes: different sizes and heights, looking different ways
+  eye(.28, -.3, .2, -.05, .05);
+  blob(-.02 * r, .14 * r, .1 * r, '#e58aa0');   // a nose, not quite in the middle
+  g.restore();
+}
+
+function drawWoolPuffs(x, y, left) {   // wool flying off when the costume pops; left = 1 at the pop, 0 when the puffs are gone
+  const u = 1 - left, r = A * .3;
+  g.save(); g.globalAlpha = Math.max(0, 1 - u * u);
+  for (let n = 0; n < 8; n++) {
+    const a = n * Math.PI / 4 + .3, d = r * (.5 + 2.4 * u);
+    blob(x + Math.cos(a) * d, y + Math.sin(a) * d * .8 - u * r, r * .32 * (1 - .6 * u), '#ffffff', '#c9c2d0');
+  }
+  g.restore();
+}
+
+// A red ball: shiny, and it stretches in the air and squashes when it lands, like a real bouncing ball
+function drawRedBall(x, y, e) {   // (x, y) is the point where it touches the cube
+  const R = A * .324;
+  let stretch = 0, squash = 0;
+  if (e.drop) stretch = .2;                                   // falling in from the top of the screen
+  else if (e.fall) stretch = .15;                             // falling off the edge
+  else if (e.hp) { const t = Math.min(1, e.hp.t); stretch = .2 * Math.sin(Math.PI * t); if (t > .85) squash = (t - .85) / .15 * .3; }
+  else if (e.wait > 0) squash = .3 * Math.min(1, e.wait / BALL_REST);   // flattened just after landing, then springs back
+  g.save(); g.translate(x, y); g.scale(1 - stretch * .45 + squash * .5, 1 + stretch - squash);
+  const grad = g.createRadialGradient(-R * .35, -R * 1.35, R * .1, 0, -R, R * 1.05);   // light from the upper left
+  grad.addColorStop(0, '#ff9a9a'); grad.addColorStop(.45, '#e63946'); grad.addColorStop(1, '#9d1c2b');
+  g.beginPath(); g.arc(0, -R, R, 0, 7); g.fillStyle = grad; g.fill();
+  g.beginPath(); g.ellipse(-R * .35, -R * 1.4, R * .22, R * .13, -.6, 0, 7); g.fillStyle = 'rgba(255,255,255,.75)'; g.fill();   // shiny spot
+  g.restore();
+}
+
 function drawEnemy(e) {
-  const p = enemyPos(e), r = A * .26, x = p[0], y = p[1] - r;
-  g.fillStyle = e.kind === 'red' ? '#e63946' : '#8e44ad';
-  let ey = y;
-  if (e.kind === 'coily') {
-    for (let s = 0; s < 3; s++) { g.beginPath(); g.arc(x, y - s * r * .9, r * (s === 2 ? 1 : .85), 0, 7); g.fill(); }
-    ey = y - 1.8 * r;
-  } else { g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); }
-  g.fillStyle = '#fff';
-  for (const s of [-1, 1]) { g.beginPath(); g.arc(x + s * r * .38, ey - r * .1, r * .22, 0, 7); g.fill(); }
+  const p = enemyPos(e);
+  if (e.kind === 'wolfy') { drawWolfy(p[0], p[1], e); if (e.pop > 0) drawWoolPuffs(p[0], p[1] - A * .4, e.pop / POP_TIME); return; }
+  if (e.kind === 'costume') { drawCostume(p[0], p[1], e); return; }
+  drawRedBall(p[0], p[1], e);
 }
 
 // ---- Levitating platforms: one beside each back edge, each usable once per level ----
 // Hopping through the rear wall from the right column lands on the platform, which then
-// carries Q*bert over the rear-most stack, vanishes, and lets him drop onto it.
+// carries LamBert over the rear-most stack, vanishes, and lets him drop onto it.
 // Chance of a column is proportional to its distance k from the rear stack, so longer rides are likelier
 function pickFar(list) {
   let r = Math.random() * list.reduce((a, k) => a + k, 0);
@@ -210,21 +321,22 @@ function pickFar(list) {
   return list[list.length - 1];
 }
 
-function makeDiscs() {
-  discs = [];
+function makeBalloons() {
+  balloons = [];
   const left = [], right = [];
   for (let k = 1; k < N; k++) { if (h[0][k] > 0) left.push(k); if (h[k][0] > 0) right.push(k); }
-  if (left.length) discs.push({i: 0, j: pickFar(left), dir: [-1, 0]});    // reached by hopping up-left
-  if (right.length) discs.push({i: pickFar(right), j: 0, dir: [0, -1]});  // reached by hopping up-right
+  if (left.length) balloons.push({i: 0, j: pickFar(left), dir: [-1, 0]});    // reached by hopping up-left
+  if (right.length) balloons.push({i: pickFar(right), j: 0, dir: [0, -1]});  // reached by hopping up-right
 }
 
-function discPos(d) {   // point on the platform where Q*bert stands
-  return P(d.i + d.dir[0] + .5, d.j + d.dir[1] + .5, h[d.i][d.j] + DISC_LIFT);
+function balloonPos(d) {   // point on the platform where LamBert stands
+  return P(d.i + d.dir[0] + .5, d.j + d.dir[1] + .5, h[d.i][d.j] + BALLOON_LIFT);
 }
 
 function startRide(d) {
   pi = 0; pj = 0; queued = null; rest = 0;
-  const from = discPos(d), r0 = P(.5, .5, h[0][0]), top = [r0[0], r0[1] - A];   // same path as ridePos()
+  facing = {away: false, right: true};
+  const from = balloonPos(d), r0 = P(.5, .5, h[0][0]), top = [r0[0], r0[1] - A * RIDE_TOP];   // same path as ridePos()
   const len = A + Math.hypot(top[0] - from[0], top[1] - (from[1] - A));          // up one cube-height, then across
   ride = {d, t: 0, phase: 0, from, y: 0, v: 0, dur: len / (RIDE_SPEED * A)};   // constant speed: longer ride, longer time
 }
@@ -233,7 +345,7 @@ function ridePos() {
   const r0 = P(.5, .5, h[0][0]);
   if (ride.phase === 1) return [r0[0], r0[1] - ride.y];   // dropping onto the rear stack
   // Constant speed along the whole path (straight up, then straight across), with no pause at the corner
-  const t = Math.min(1, ride.t), mid = [ride.from[0], ride.from[1] - A], top = [r0[0], r0[1] - A];   // top = one cube-height above the rear stack
+  const t = Math.min(1, ride.t), mid = [ride.from[0], ride.from[1] - A], top = [r0[0], r0[1] - A * RIDE_TOP];   // top = RIDE_TOP cube-heights above the rear stack
   const len1 = A, len2 = Math.hypot(top[0] - mid[0], top[1] - mid[1]), s = t * (len1 + len2);
   const lerp = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
   return s < len1 ? lerp(ride.from, mid, s / len1) : lerp(mid, top, (s - len1) / (len2 || 1));
@@ -242,37 +354,38 @@ function ridePos() {
 function updateRide(dt) {
   if (ride.phase === 0) {
     ride.t += dt / ride.dur;
-    if (ride.t >= 1) { ride.phase = 1; ride.y = A; ride.v = 0; discs = discs.filter(x => x !== ride.d); }
+    if (ride.t >= 1) { ride.phase = 1; ride.y = A * RIDE_TOP; ride.v = 0; balloons = balloons.filter(x => x !== ride.d); }
   } else {
     ride.v += 3000 * dt; ride.y -= ride.v * dt;
-    if (ride.y <= 0) { ride = null; rest = QBERT_REST; landed(); }
+    if (ride.y <= 0) { ride = null; rest = LAMBERT_REST; landed(); }
   }
 }
 
-function drawDisc(p) {
+function drawBalloon(p) {
   g.fillStyle = '#7a3b00'; g.beginPath(); g.ellipse(p[0], p[1] + 5, A * .62, A * .31, 0, 0, 7); g.fill();
   g.fillStyle = '#ffbf47'; g.beginPath(); g.ellipse(p[0], p[1], A * .62, A * .31, 0, 0, 7); g.fill();
   g.fillStyle = '#ff5d8f'; g.beginPath(); g.ellipse(p[0], p[1], A * .4, A * .2, 0, 0, 7); g.fill();
 }
 
-function newLevel() { do { gen(); } while (!solvable()); makeDiscs(); enemies = []; spawnT = 3; place(); pause = false; }
+function newLevel() { do { gen(); } while (!solvable()); levelSeed = Math.random() * 1000; makeBalloons(); makeCracks(); enemies = []; spawnT = 3; place(); pause = false; }
 
-const QBERT_HOP = 0.2, QBERT_REST = 0.2;   // hop time and pause after landing, in seconds
-let rest = 0, queued = null, ride = null, discs = [];
-const DISC_LIFT = 1 / 3, RIDE_SPEED = 3.1;   // platform floats this far above its column (in cubes); ride speed in cube-heights per second
+const LAMBERT_HOP = 0.2, LAMBERT_REST = 0.2;   // hop time and pause after landing, in seconds
+let rest = 0, queued = null, ride = null, balloons = [];
+const BALLOON_LIFT = 1 / 4, RIDE_SPEED = 4.7, RIDE_TOP = 1.5;   // platform floats this far above its column (in cubes); ride speed in cube-heights per second; RIDE_TOP = how many cube-heights above the rear stack the ride ends
 function move(di, dj) {
   if (fall || pause || over || dying > 0 || ride) return;
   if (hop || rest > 0) { queued = [di, dj]; return; }   // remember one swipe or key press
   const ni = pi + di, nj = pj + dj;
   const ok = ni >= 0 && nj >= 0 && ni < N && nj < N && h[ni][nj] > 0;
   if (ok && h[ni][nj] - h[pi][pj] >= 2) return;   // too high to hop up: blocked
-  const disc = discs.find(d => d.i === pi && d.j === pj && d.dir[0] === di && d.dir[1] === dj);
-  hop = {fi: pi, fj: pj, ti: ni, tj: nj, ok, t: 0, disc, back: !disc && (ni < 0 || nj < 0)};
+  const balloon = balloons.find(d => d.i === pi && d.j === pj && d.dir[0] === di && d.dir[1] === dj);
+  hop = {fi: pi, fj: pj, ti: ni, tj: nj, ok, t: 0, balloon, back: !balloon && (ni < 0 || nj < 0)};
+  facing = {away: di < 0 || dj < 0, right: dj < 0 || di > 0};   // he turns to face the way he hops
 }
 
 function hopPos(p, t) {
   const hf = h[p.fi][p.fj], ht = p.ok ? h[p.ti][p.tj] : hf;
-  const a = P(p.fi + .5, p.fj + .5, hf), b = p.disc ? discPos(p.disc) : P(p.ti + .5, p.tj + .5, ht);
+  const a = P(p.fi + .5, p.fj + .5, hf), b = p.balloon ? balloonPos(p.balloon) : P(p.ti + .5, p.tj + .5, ht);
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t - Math.sin(Math.PI * t) * A * .6];
 }
 
@@ -292,13 +405,14 @@ function update(dt) {
     return;
   }
   updateEnemies(dt);
+  checkSwap();
   if (ride) { updateRide(dt); return; }
   if (rest > 0) { rest -= dt; if (rest <= 0 && queued) { const q = queued; queued = null; move(q[0], q[1]); } }
   if (hop) {
-    hop.t += dt / QBERT_HOP;
+    hop.t += dt / LAMBERT_HOP;
     if (hop.t >= 1) {
-      if (hop.disc) { startRide(hop.disc); hop = null; }
-      else if (hop.ok) { pi = hop.ti; pj = hop.tj; hop = null; rest = QBERT_REST; landed(); }
+      if (hop.balloon) { startRide(hop.balloon); hop = null; }
+      else if (hop.ok) { pi = hop.ti; pj = hop.tj; hop = null; rest = LAMBERT_REST; landed(); }
       else { const p = hopPos(hop, 1); fall = {x: p[0], y: p[1], v: 0, back: hop.back}; hop = null; }
     }
   } else if (fall) {
@@ -313,31 +427,138 @@ function poly(pts, fill) {
   g.closePath(); g.fillStyle = fill; g.fill(); g.stroke();
 }
 
+// ---- Meadow look: grass-topped rock columns floating in a pale blue sky ----
+const GRASS = '#62d24a', EATEN = '#a39657', OUTLINE = '#3d4650';
+let levelSeed = 0;   // changes every level, so flowers, rock shades and cracks differ from level to level
+const hh = (i, j, k, s) => { const x = Math.sin(i * 127.1 + j * 311.7 + k * 74.7 + s * 19.3 + levelSeed * 53.1) * 43758.5453; return x - Math.floor(x); };   // repeatable "random" number, 0 to 1
+
+const SKY = g.createLinearGradient(0, 0, 0, H);
+SKY.addColorStop(0, '#8cc6f2'); SKY.addColorStop(1, '#b9dcf7');
+function cloud(x, y, s) {
+  g.fillStyle = 'rgba(255,255,255,.92)';
+  for (const [dx, dy, r] of [[-28, 6, 18], [-8, -6, 24], [18, -2, 21], [38, 8, 15], [4, 12, 20]]) {
+    g.beginPath(); g.arc(x + dx * s, y + dy * s, r * s, 0, 7); g.fill();
+  }
+}
+function drawSky() {
+  g.fillStyle = SKY; g.fillRect(0, 0, W, H);
+  cloud(105, 150, 1); cloud(660, 230, 1.15);   // two still clouds
+}
+
+// A point on a face given three of its corners: a = bottom-left, b = bottom-right, d = top-left
+function face(a, b, d, u, v) { return [a[0] + (b[0] - a[0]) * u + (d[0] - a[0]) * v, a[1] + (b[1] - a[1]) * u + (d[1] - a[1]) * v]; }
+let cracks = new Set();
+function makeCracks() {   // 2 or 3 cracks on the whole rock structure, always on faces you can see
+  const faces = [];
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) if (c[i][j][k]) {
+    if (i + 1 >= N || !c[i + 1][j][k]) faces.push(i + ',' + j + ',' + k + ',R');
+    if (j + 1 >= N || !c[i][j + 1][k]) faces.push(i + ',' + j + ',' + k + ',L');
+  }
+  cracks = new Set();
+  for (let n = 2 + (Math.random() < .5 ? 1 : 0); n > 0 && faces.length; n--) cracks.add(faces.splice(Math.random() * faces.length | 0, 1)[0]);
+}
+
+function crack(a, b, d, s) {   // a thin crack across a rock face
+  if (s > .6) return;
+  const u = .2 + s;
+  g.beginPath();
+  let p = face(a, b, d, u, 1); g.moveTo(p[0], p[1]);
+  p = face(a, b, d, u + .12, .62); g.lineTo(p[0], p[1]);
+  p = face(a, b, d, u - .06, .35); g.lineTo(p[0], p[1]);
+  g.strokeStyle = 'rgba(30,35,45,.35)'; g.stroke();
+  g.strokeStyle = OUTLINE;
+}
+function flower(i, j, z) {   // a small daisy on an uneaten patch of grass
+  const p = P(i + .3 + .4 * hh(i, j, 0, 5), j + .3 + .4 * hh(i, j, 0, 6), z), r = A * .08;
+  g.fillStyle = '#fff';
+  for (let n = 0; n < 5; n++) { const a = n * 1.2566; g.beginPath(); g.arc(p[0] + Math.cos(a) * r * 1.3, p[1] + Math.sin(a) * r * .7, r, 0, 7); g.fill(); }
+  g.fillStyle = '#ffd23f'; g.beginPath(); g.arc(p[0], p[1], r * .75, 0, 7); g.fill();
+}
+
 function drawCubes() {
-  g.lineWidth = 1; g.strokeStyle = '#0b1020';
+  g.lineWidth = 1; g.strokeStyle = OUTLINE;
   const list = [];
   for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) for (let k = 0; k < N; k++) if (c[i][j][k]) list.push([i, j, k]);
   list.sort((a, b) => (a[0] + a[1] + a[2]) - (b[0] + b[1] + b[2]));   // far to near
   for (const [i, j, k] of list) {
-    const top = k === h[i][j] - 1;
-    poly([P(i, j, k + 1), P(i + 1, j, k + 1), P(i + 1, j + 1, k + 1), P(i, j + 1, k + 1)], top && seen[i][j] ? '#ffd54a' : '#5b8def');
-    poly([P(i + 1, j, k), P(i + 1, j + 1, k), P(i + 1, j + 1, k + 1), P(i + 1, j, k + 1)], '#24367a'); // right face
-    poly([P(i, j + 1, k), P(i + 1, j + 1, k), P(i + 1, j + 1, k + 1), P(i, j + 1, k + 1)], '#34498f'); // left face
+    const top = k === h[i][j] - 1, v = hh(i, j, k, 1) * 5 - 2.5;   // v varies each rock's shade a little
+    poly([P(i, j, k + 1), P(i + 1, j, k + 1), P(i + 1, j + 1, k + 1), P(i, j + 1, k + 1)], top && seen[i][j] ? EATEN : GRASS);
+    if (top && !seen[i][j] && hh(i, j, 0, 3) < .17) flower(i, j, k + 1);
+    poly([P(i + 1, j, k), P(i + 1, j + 1, k), P(i + 1, j + 1, k + 1), P(i + 1, j, k + 1)], `hsl(215, 9%, ${44 + v}%)`);   // right face (darker rock)
+    if (cracks.has(i + ',' + j + ',' + k + ',R')) crack(P(i + 1, j, k), P(i + 1, j + 1, k), P(i + 1, j, k + 1), hh(i, j, k, 2) * .6);
+    poly([P(i, j + 1, k), P(i + 1, j + 1, k), P(i + 1, j + 1, k + 1), P(i, j + 1, k + 1)], `hsl(215, 8%, ${62 + v}%)`);   // left face (lighter rock)
+    if (cracks.has(i + ',' + j + ',' + k + ',L')) crack(P(i, j + 1, k), P(i + 1, j + 1, k), P(i, j + 1, k + 1), hh(i, j, k, 4) * .6);
   }
 }
 
-function drawPlayer(x, y) {
-  const r = A * 0.3; y -= r * 0.9;
-  g.fillStyle = '#ff8a1f'; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
-  g.fillStyle = '#ffb35c'; g.beginPath(); g.ellipse(x, y + r * .4, r * .6, r * .24, 0, 0, 7); g.fill();
-  for (const s of [-1, 1]) {
-    g.fillStyle = '#fff'; g.beginPath(); g.arc(x + s * r * .4, y - r * .25, r * .26, 0, 7); g.fill();
-    g.fillStyle = '#000'; g.beginPath(); g.arc(x + s * r * .4, y - r * .2, r * .11, 0, 7); g.fill();
+// ---- LamBert turns to face the way he hops ----
+let facing = {away: false, right: true};   // away = hopping up the structure; right = hopping toward the right of the screen
+
+function blob(cx, cy, r, fill, line) {   // a filled circle with an optional thin outline
+  g.beginPath(); g.arc(cx, cy, r, 0, 7); g.fillStyle = fill; g.fill();
+  if (line) { g.strokeStyle = line; g.lineWidth = 1.2; g.stroke(); }
+}
+
+// ---- LamBert: a black-faced lamb (white wool, dark face, ears and legs) ----
+function drawPlayer(x, y) {   // (x, y) is the point where his feet touch
+  const r = A * .36, dx = facing.right ? 1 : -1, away = facing.away;
+  const WOOL = '#ffffff', OUT = '#c9c2d0', DARK = '#3f343c', PINK = '#e9a3b5';
+  let stretch = 0, ears = 0;   // stretch: + tall in the air, - squashed after landing; ears: + hanging down, - flying up
+  if (ride) ears = 0;
+  else if (hop) { const t = Math.min(1, hop.t); stretch = .16 * Math.sin(Math.PI * t); ears = Math.cos(Math.PI * t); }
+  else if (fall) ears = -1;
+  else if (rest > 0) { stretch = -.14 * rest / LAMBERT_REST; ears = .5 * rest / LAMBERT_REST; }
+  g.save(); g.translate(x, y); g.scale(1 - stretch * .6, 1 + stretch);
+  g.fillStyle = DARK;   // legs
+  for (const s of [-1, 1]) { g.beginPath(); g.ellipse(s * r * .34 + dx * r * .08, -r * .3, r * .15, r * .3, 0, 0, 7); g.fill(); }
+  const by = -r * .98;   // centre of the woolly body
+  const drawBody = () => {
+    for (const [px, py, pr] of [[-.62, .1, .5], [.62, .1, .5], [0, .35, .62], [-.45, -.4, .5], [.45, -.4, .5], [0, 0, .85]]) blob(px * r * .92, by + py * r * .92, pr * r * .92, WOOL, OUT);
+    if (away) blob(dx * r * .1, by + r * .5, r * .26, '#ffffff', '#b9aebf');   // little tail, seen from behind
+  };
+  const hx = dx * r * .2, hy = by - r * (away ? .75 : .3), hr = r * .7;   // big round head (higher up on screen when seen from behind, since it is farther away)
+  const drawHead = () => {
+  for (const s of [-1, 1]) {   // ears stick out to the sides and flop with the hop
+    g.save(); g.translate(hx + s * hr * .85, hy - hr * .05 + ears * r * .08);
+    g.rotate(-s * (1.0 - ears * .4));
+    g.beginPath(); g.ellipse(0, hr * .3, hr * .28, hr * .52, 0, 0, 7); g.fillStyle = DARK; g.fill();
+    if (!away) { g.beginPath(); g.ellipse(0, hr * .3, hr * .13, hr * .34, 0, 0, 7); g.fillStyle = PINK; g.fill(); }
+    g.restore();
   }
+  blob(hx, hy, hr, away ? WOOL : DARK, away ? OUT : null);   // from behind you see wool, from the front a dark face
+  for (const [tx, ty, tr] of [[0, -.85, .4], [-.42, -.72, .3], [.42, -.72, .3]]) blob(hx + tx * hr, hy + ty * hr, tr * hr, WOOL, OUT);   // woolly top-knot
+  if (!away) {   // face
+    const ex = hx + dx * hr * .12;
+    for (const s of [-1, 1]) {
+      blob(ex + s * hr * .38, hy - hr * .08, hr * .22, '#ffffff');                        // eye
+      blob(ex + s * hr * .38 + dx * hr * .05, hy - hr * .06, hr * .11, '#1b1620');        // pupil
+    }
+    g.beginPath(); g.ellipse(hx + dx * hr * .22, hy + hr * .38, hr * .34, hr * .22, 0, 0, 7); g.fillStyle = '#6d5b69'; g.fill();   // muzzle
+    blob(hx + dx * hr * .22, hy + hr * .3, hr * .1, PINK);                                   // nose
+  }
+  };
+  if (away) { drawHead(); drawBody(); } else { drawBody(); drawHead(); }   // from behind the body is nearer than the head, so it covers part of it
+  g.restore();
+}
+
+// ---- Who is in front of whom: the thing nearer the viewer is drawn later, so it covers the other ----
+const depth = (x, y, z) => x + y + z;   // larger = nearer the viewer (who looks along the x, y and z axes together)
+function hopDepth(p) {   // depth of something partway through the hop p
+  const t = Math.min(1, p.t), hf = h[p.fi][p.fj];
+  const ht = p.balloon ? hf + BALLOON_LIFT : p.ok ? h[p.ti][p.tj] : hf;
+  return depth(p.fi + .5 + (p.ti - p.fi) * t, p.fj + .5 + (p.tj - p.fj) * t, hf + (ht - hf) * t);
+}
+function playerDepth() {
+  if (ride) return 1e6;   // riding above everything
+  if (hop) return hopDepth(hop);
+  return depth(pi + .5, pj + .5, h[pi][pj]);
+}
+function enemyDepth(e) {   // the extra .01 puts a monster in front of LamBert when they are on the same spot
+  return (e.hp ? hopDepth(e.hp) : depth(e.i + .5, e.j + .5, h[e.i][e.j])) + .01;
 }
 
 function draw() {
-  g.clearRect(0, 0, W, H);
+  drawSky();
   // Past a rear wall he is behind the cube structure, so draw him before the cubes
   const behind = (hop && hop.back && hop.t >= .5) || (fall && fall.back);
   const drawMe = () => {
@@ -350,15 +571,18 @@ function draw() {
   if (behind) drawMe();
   enemies.filter(behindWall).forEach(drawEnemy);
   drawCubes();
-  discs.forEach(d => drawDisc(ride && ride.d === d && ride.phase === 0 ? ridePos() : discPos(d)));
-  enemies.filter(e => !behindWall(e)).forEach(drawEnemy);
-  if (!behind) drawMe();
-  g.fillStyle = '#e8ecff'; g.font = '20px -apple-system,Helvetica,Arial,sans-serif'; g.textAlign = 'left';
+  balloons.forEach(d => drawBalloon(ride && ride.d === d && ride.phase === 0 ? ridePos() : balloonPos(d)));
+  const actors = enemies.filter(e => !behindWall(e)).map(e => ({d: enemyDepth(e), draw: () => drawEnemy(e)}));
+  if (!behind) actors.push({d: playerDepth(), draw: drawMe});
+  actors.sort((a, b) => a.d - b.d);   // farthest first
+  actors.forEach(a => a.draw());
+  g.fillStyle = '#1d3557'; g.font = '20px -apple-system,Helvetica,Arial,sans-serif'; g.textAlign = 'left';
   g.fillText('Score ' + score + '    Lives ' + Math.max(lives, 0) + '    Level ' + level, 20, 34);
-  g.textAlign = 'center'; g.fillStyle = '#8f9bd0'; g.font = '15px -apple-system,Helvetica,Arial,sans-serif';
+  g.textAlign = 'right'; g.fillText('LamBert', W - 20, 34);
+  g.textAlign = 'center'; g.fillStyle = '#4a6a8f'; g.font = '15px -apple-system,Helvetica,Arial,sans-serif';
   g.fillText('Hop with Q E Z C, the arrow keys, or a diagonal swipe', W / 2, H - 16);
   if (over || msg) {
-    g.fillStyle = '#ffd54a'; g.font = 'bold 40px -apple-system,Helvetica,Arial,sans-serif';
+    g.fillStyle = '#b4531a'; g.font = 'bold 40px -apple-system,Helvetica,Arial,sans-serif';
     g.fillText(over ? 'Game over' : msg, W / 2, 70);
     if (over) { g.font = '18px -apple-system,Helvetica,Arial,sans-serif'; g.fillText('Press Space or tap to play again', W / 2, 100); }
   }
