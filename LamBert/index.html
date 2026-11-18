@@ -11,9 +11,161 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
 </style></head><body>
 <canvas id="c" width="760" height="680"></canvas>
 <script>
+/* =====================================================================================
+   LamBert: a Q*bert-style arcade game with an original twist, all in this one HTML file.
+   =====================================================================================
+   This comment is documentation for humans, and for a future Claude who is handed this file at
+   the start of a brand-new chat. It records WHAT we are building and WHY each decision was made.
+   The owner is a programmer (Java, Python, data science) who had never built an app or website
+   before. He plays in Safari on a MacBook Pro and on an iPhone/iPad. The code could not be run
+   or seen while it was written, so he plays it and reports back; many numbers are tuned by feel.
+
+   1. THE GAME
+   -----------
+   LamBert is a chubby black-faced lamb hopping around a meadow made of rock columns that float in a
+   pale blue sky. He must eat all the grass (a column top is bright green until he lands on it,
+   then it turns a pale khaki) while avoiding monsters. When every patch is eaten the level is
+   cleared and a new random meadow appears. Monsters: red balls, and Wolfy, a lean hungry wolf who
+   rolls down the structure disguised as a badly made sheep costume (a woolly ball with crooked
+   ears and two mismatched eyes). Two balloons per level let LamBert escape to the top.
+   It is modelled on the 1980s arcade game Q*bert, with these deliberate differences:
+     - THE TWIST: the board is not a pyramid but a randomly thinned N x N x N block of cubes (section 2).
+     - Hops of 0 levels are allowed (the original always hops up or down exactly one level).
+     - Escape balloons (the original has flying discs) are placed at random on jagged edges.
+     - All characters, names, colors and art are original (see the legal note in section 9).
+
+   2. THE BOARD (the twist)
+   ------------------------
+   - Start with a full N x N x N cube (N = 6; change the constant N and everything adapts), viewed from a
+     corner so it looks like a hexagon. Remove cubes with a random walk (gen): pick a random grid cell;
+     if it holds a cube and nothing sits in front of it (toward the viewer) remove it ('only a fully
+     visible cube may be removed'); if it is empty and fully supported from below and from both back sides
+     add a cube ('only a fully supported cube may be added'). Walk 100 * N^3 steps; always keep >= 1 cube.
+   - Consequence (important): column heights h[i][j] never increase toward the viewer, so no column hides
+     another and EVERY column top is visible. The structure has no floating cubes from any of the three
+     viewing directions. (Mathematically these shapes are 'plane partitions' in a box.)
+   - The imaginary floor and the two imaginary back walls are INVISIBLE. Hopping onto an empty column or off
+     the structure means falling to your doom. Falling out through a back wall is drawn BEHIND the cubes.
+   - Solvability: some random shapes cannot be finished (LamBert may hop up only 1 level, so he can get
+     stranded below a cliff). newLevel keeps generating until solvable() passes (about 80% of N=5 shapes do).
+     solvable() = for every pair of columns, one can be reached from the other without falling (so a route
+     covering everything exists), AND some column can reach the rear-most one again (see rule 4 below).
+     Even a solvable level can require careful ordering; that is intended.
+
+   3. COORDINATES AND DRAWING
+   --------------------------
+   - Cube (i, j, k): i and j run along the two horizontal axes, k is height. The viewer looks from large
+     i, j, k. c[i][j][k] = 1 if a cube exists; h[i][j] = height of column (i, j); the column (0, 0) is the
+     rear-most one (also the tallest). P(x, y, z) projects a grid point to the screen (isometric, A pixels
+     per cube edge). Hops: (di, dj) = (-1, 0) is up-left, (0, -1) up-right, (1, 0) down-right, (0, 1) down-left.
+   - Draw order: sky; anything behind a back wall; the cubes far-to-near; balloons; then all characters
+     sorted by depth x + y + z (nearer = larger, so a nearer character covers a farther one); LamBert
+     riding a balloon is drawn last. Heights never increase toward the viewer, so characters standing on
+     column tops are never hidden by cubes.
+   - Random-looking details (flowers, rock shades, crack shapes) come from hh(), a hash of the cube
+     position plus levelSeed (new each level), so they stay still during a level and differ between levels.
+
+   4. RULES OF PLAY
+   ----------------
+   1. Controls: keys Q (up-left), E (up-right), Z (down-left), C (down-right), or the arrow keys rotated
+      45 degrees (left = up-left, up = up-right, down = down-left, right = down-right); on a touch screen a
+      diagonal swipe anywhere; tap to restart after Game over. (We decided against on-screen arrow buttons
+      and against tapping a column: swipes keep the risk of falling, which is part of the fun.)
+   2. LamBert may hop UP at most 1 level (a higher hop is simply blocked), or stay level, or go DOWN any
+      amount. Hopping to an empty column or off the structure: he falls and loses a life.
+   3. Score: 25 per patch eaten, 1,000 per level cleared, 500 when Wolfy follows him off the edge. An extra life
+      comes at 8,000 points and then every 14,000 points (22,000, 36,000, ...). He starts with 3 lives: the one
+      in play plus 2 spares, and the spares are shown as little pictures of LamBert under the score (as in
+      the original game), not as a number. Level clear = every column eaten.
+   4. As in the original, the rear-most column does NOT count when he starts or respawns there; he must hop
+      away and land back on it (hence solvable() requires a way back up to it).
+   5. Touching a monster kills him, any of these ways: he lands on it, it lands on him, or they hop toward
+      each other's spots and meet in mid-air (checkSwap). Death freezes everything for 0.5 s (DEATH_PAUSE).
+
+   5. MONSTERS (all hop one column at a time, only onto columns that have cubes)
+   -----------------------------------------------------------------------------
+   - Spawning: every 4 s (SPAWN_EVERY), if fewer than 3 monsters are on the board, a ball drops straight down
+     from the top of the screen onto a column next to the rear-most one (never onto it, so a LamBert who
+     stands still there is safe). Red ball: hops randomly toward the viewer and falls off the bottom.
+     Costume ball (Wolfy in disguise): same, but when it reaches a column with no way on it sits and shakes
+     for 1.5 s, then the costume pops (puffs of wool) and Wolfy appears. Only ONE costume/Wolfy at a time.
+   - The chance that a spawn is a costume ball is 20% + 20% for every red ball since the last costume, so
+     at most 4 reds in a row (the owner disliked long waits; a flat probability caused them).
+   - Wolfy chases LamBert along a shortest route (breadth-first search) obeying the same hop-up limit as
+     LamBert (WOLFY_MAX_UP = 1; the owner may later allow 2). If LamBert cannot be reached he wanders around
+     looking frustrated. A Wolfy is 'stranded' when he cannot get to the column LamBert is on (if he can reach
+     the rear-most column he can always reach LamBert). He re-decides before every hop: while stranded, after
+     (columns he is confined to + 7) more hops he jumps to his doom, so he can never block the grass for good;
+     but if LamBert moves where he can reach, he gives up on the edge and chases again.
+   - Balloon lure: while LamBert rides a balloon, Wolfy blindly runs to the column LamBert jumped from and, if
+     he gets there in time, hops off the edge after him (the original does this with Coily the snake).
+   - Original characters: the owner first liked a snake that hatches from an egg (as in the original game),
+     but a wolf in a sheep costume suits the lamb theme better.
+
+   6. BALLOONS (escape)
+   --------------------
+   - Each level has one balloon beside each back edge (yellow left, pink right), on a random edge column
+     (never the rear-most one), more likely the farther it is from the rear-most column so rides are long.
+     Each can be used once per level; they come back next level.
+   - Hop up and through the rear wall from that column: the hop rises BALLOON_LIFT (1/4 cube) and LamBert
+     grabs the string with his front legs ('arms', as in Shaun the Sheep). Before he grabs it the string hangs
+     lower (BALLOON_TAIL) so players see which column to jump from. The balloon lifts him straight up one cube,
+     then glides in a straight line at constant speed (RIDE_SPEED) to RIDE_TOP (1.5 cubes) above the rear-most
+     stack, pops, and he drops onto it (an ordinary landing: it eats that patch). Up to a third of the balloon
+     may float off the top of the screen. While riding LamBert cannot be hit.
+
+   7. TIMING (seconds; all are constants near the code that uses them)
+   -------------------------------------------------------------------
+   LamBert: hop 0.2 + rest 0.2 (one key press during the rest is remembered). Balls: hop 0.25 + rest 0.35.
+   Wolfy: hop 0.25 + rest 0.25. Original-style feel: LamBert only slightly faster than the monsters.
+
+   8. LOOK AND STYLE DECISIONS
+   ---------------------------
+   - Meadow of rock columns in a pale blue sky with two still fluffy clouds: tops are tasty green (about 1 in 6
+     has a daisy), eaten patches turn pale yellowish-green khaki (not dirt brown: 'not a sickly brown'), sides
+     are gray rock, LEFT sides lighter and RIGHT sides darker with only slight shade variation per rock, and
+     just 2-3 thin cracks on the whole structure. Flat colors and simple shapes so everything stays readable on a
+     small phone screen.
+   - LamBert: chubby and cute, white wool, dark face/ears/legs, big head, turns to face the way he hops (front or
+     back view, left or right), stretches in the air, squashes on landing, ears flop. From behind, his body is
+     drawn over his head. Wolfy: lean, hungry, scary (long legs and snout, slanted brows, tongue and fang), turns
+     to face his way too. Red ball: glossy, no eyes, squashes when it bounces. The monsters' hop animations
+     are stretch-and-squash only.
+
+   9. LEGAL NOTE
+   -------------
+   Game rules and mechanics are generally not protected by copyright, but characters, names, art and sounds
+   are. So the mechanics follow Q*bert while every visible and audible element is original (lamb, wolf,
+   balloons, meadow). Do not reuse Q*bert's names (Coily, Slick, Sam, Ugg, Wrongway), designs or sounds.
+   If this is ever published (the owner has asked about the App Store and ads) get an IP lawyer's opinion
+   first, and check the name LamBert is not too close to Q*bert.
+
+   10. HOW THE CODE IS ORGANIZED (roughly top to bottom)
+   -----------------------------------------------------
+   Constants (N, timings, colors) -> projection P() -> gen() board generator -> solvable() -> place/newLevel ->
+   move() (input) -> addScore() (points and extra lives), landed(), die(), update() (game logic, one call per frame) -> monsters (spawn, decide,
+   chase, reachableFrom, hopTo, updateEnemies, checkSwap) -> balloons and the ride -> drawing (drawSky, drawCubes,
+   drawPlayer = LamBert, drawWolfy, drawCostume, drawRedBall, drawBalloon, draw) -> keyboard and touch handlers ->
+   the frame loop. Main state: c, h, seen (eaten patches), pi/pj (LamBert's column), hop, fall, ride, rest,
+   queued, facing, enemies, balloons, pops, cracks, levelSeed, score, lives, level, dying, pause, over.
+   Characters are drawn from the point where their feet touch a column top.
+
+   11. IDEAS NOT DONE YET
+   ----------------------
+   Sound effects (Web Audio, no files: a chomping sound when LamBert eats grass; a pop, a howl, a boing),
+   difficulty that grows with the level, a high score, and tuning after more play-testing. Visual polish is
+   being done in small steps and the owner reviews each step before the next.
+
+   12. HOW TO WORK WITH THE OWNER
+   ------------------------------
+   He likes to discuss options and hear an honest opinion BEFORE anything is built, then to approve changes in
+   small steps, and he describes problems precisely (a good sign: trust his observations). Keep every tunable
+   number a named constant, keep the code readable (descriptive names, comments), and explain the reasoning
+   behind changes. Say plainly when something could not be tested.
+   ===================================================================================== */
 const N = 6;                       // size of the big cube: change this to try other sizes
 const WALK_STEPS = 100 * N * N * N; // random-walk steps used to build each level
-const LIVES = 3;
+const LIVES = 3;   // lives at the start, counting the one in play (the other 2 are shown as little lambs)
 
 const cv = document.getElementById('c'), g = cv.getContext('2d');
 const W = cv.width, H = cv.height;
@@ -77,7 +229,7 @@ const COSTUME_CHANCE = 0.2, COSTUME_BOOST = 0.2;   // chance of a costume ball, 
 let redsSinceCostume = 0;
 const POP_TIME = 0.45;   // seconds the wool puffs fly when Wolfy's costume comes off
 const BALL_REST = 0.35, WOLFY_REST = 0.25;   // pause after each landing, in seconds
-const STRANDED_HOPS = 10;   // a Wolfy with no hop at all hops in place this many times, then jumps off
+const STRANDED_EXTRA_HOPS = 7;   // a stranded Wolfy hops (the number of columns he is confined to + this many) more times, then jumps to his doom
 const SPAWN_EVERY = 4;       // seconds between new balls
 const MAX_ENEMIES = 3;
 const WOLFY_MAX_UP = 1;      // highest hop up that Wolfy can make (LamBert's limit is 1)
@@ -112,7 +264,7 @@ function spawn() {
 
 // Wolfy takes the first step of a shortest route to LamBert that obeys Wolfy's own hop rules
 function chase(e) {
-  // While LamBert rides a platform, Wolfy blindly keeps chasing the spot LamBert jumped from
+  // While LamBert rides a balloon, Wolfy blindly keeps chasing the spot LamBert jumped from
   const lure = ride && ride.phase === 0, gi = lure ? ride.d.i : pi, gj = lure ? ride.d.j : pj;
   const first = new Map([[e.i * N + e.j, null]]), q = [[e.i, e.j]];
   for (let n = 0; n < q.length; n++) {
@@ -129,17 +281,43 @@ function chase(e) {
   return opts.length ? opts[Math.random() * opts.length | 0] : null;
 }
 
+// Every column Wolfy can still get to from (i0, j0), following his own hop rules (the starting column included).
+// Columns are numbered i * N + j, so the rear-most column (0, 0) is number 0.
+function reachableFrom(i0, j0) {
+  const seen = new Set([i0 * N + j0]), q = [[i0, j0]];
+  for (let n = 0; n < q.length; n++) {
+    const [i, j] = q[n];
+    for (const d of DIRS) if (legal(i, j, d[0], d[1], WOLFY_MAX_UP)) {
+      const k = (i + d[0]) * N + j + d[1];
+      if (!seen.has(k)) { seen.add(k); q.push([i + d[0], j + d[1]]); }
+    }
+  }
+  return seen;
+}
+
+// Where a stranded Wolfy hops when his time is up: off the edge of the structure if he is next to one,
+// otherwise one step toward the viewer (those steps are never too high), until he reaches an edge.
+function doomedHop(e) {
+  const edge = DIRS.filter(d => { const a = e.i + d[0], b = e.j + d[1]; return a < 0 || b < 0 || a >= N || b >= N || h[a][b] === 0; });
+  if (edge.length) return edge[Math.random() * edge.length | 0];
+  const fwd = FWD.filter(m => legal(e.i, e.j, m[0], m[1], 99));
+  return fwd[Math.random() * fwd.length | 0];
+}
+
 function decide(e) {
   let d;
   if (e.kind === 'wolfy') {
     if (ride && ride.phase === 0 && e.i === ride.d.i && e.j === ride.d.j) {   // blindly follows LamBert off the edge
-      score += 500; hopTo(e, ride.d.dir); return;
+      addScore(LURE_POINTS); hopTo(e, ride.d.dir); return;
     }
+    const reach = reachableFrom(e.i, e.j);   // every column he can get to from here
+    const goal = ride && ride.phase === 0 ? ride.d : {i: pi, j: pj};   // the column he is chasing (same goal as chase())
+    if (!reach.has(goal.i * N + goal.j)) {   // stranded: he cannot get to LamBert
+      if (e.hopsLeft === undefined) e.hopsLeft = reach.size + STRANDED_EXTRA_HOPS;   // columns he is confined to, plus 7
+      if (e.hopsLeft-- <= 0) { hopTo(e, doomedHop(e)); return; }   // time is up: he jumps to his doom
+    } else e.hopsLeft = undefined;   // LamBert is reachable (again): he stops heading for the edge and gives chase
     d = chase(e);
-    if (!d) {   // stranded with no hop available: hop in place for a while, then jump off the edge
-      e.stuck = (e.stuck || 0) + 1;
-      d = e.stuck > STRANDED_HOPS ? FWD[Math.random() * 2 | 0] : [0, 0];
-    }
+    if (!d) d = [0, 0];   // no hop available at all (a single column): hop in place, looking frustrated
   } else {
     const opts = FWD.filter(m => legal(e.i, e.j, m[0], m[1], 99));
     d = opts.length ? opts[Math.random() * opts.length | 0] : FWD[Math.random() * 2 | 0];   // no way on: hop off the edge
@@ -154,6 +332,19 @@ function checkSwap() {
     const m = e.hp;
     if (m && m.ok && m.fi === hop.ti && m.fj === hop.tj && m.ti === hop.fi && m.tj === hop.fj && m.t + hop.t >= 1) { die(); return; }
   }
+}
+
+// ---- Scoring: points, and an extra life at 8,000 points and then every 14,000 more ----
+const GRASS_POINTS = 25, LEVEL_POINTS = 1000, LURE_POINTS = 500;   // per patch eaten; per level cleared; for luring Wolfy off the edge
+const EXTRA_LIFE_FIRST = 8000, EXTRA_LIFE_EVERY = 14000;
+let nextExtraLife = EXTRA_LIFE_FIRST, notice = '', noticeT = 0;   // noticeT = seconds left to show the 'Extra life!' message
+function addScore(points) {
+  score += points;
+  while (score >= nextExtraLife) { lives++; nextExtraLife += EXTRA_LIFE_EVERY; notice = 'Extra life!'; noticeT = 1.5; }
+}
+function startNewGame() {   // after Game over
+  over = false; score = 0; lives = LIVES; level = 1; nextExtraLife = EXTRA_LIFE_FIRST; noticeT = 0;
+  newLevel();
 }
 
 const DEATH_PAUSE = 0.5;   // seconds everything freezes after LamBert is hit
@@ -311,9 +502,9 @@ function drawEnemy(e) {
   drawRedBall(p[0], p[1], e);
 }
 
-// ---- Levitating platforms: one beside each back edge, each usable once per level ----
-// Hopping through the rear wall from the right column lands on the platform, which then
-// carries LamBert over the rear-most stack, vanishes, and lets him drop onto it.
+// ---- Balloons: one beside each back edge, each usable once per level ----
+// Hopping through the rear wall from the right column makes LamBert grab the balloon's string.
+// The balloon carries him over the rear-most stack, pops, and he drops onto it.
 // Chance of a column is proportional to its distance k from the rear stack, so longer rides are likelier
 function pickFar(list) {
   let r = Math.random() * list.reduce((a, k) => a + k, 0);
@@ -325,53 +516,81 @@ function makeBalloons() {
   balloons = [];
   const left = [], right = [];
   for (let k = 1; k < N; k++) { if (h[0][k] > 0) left.push(k); if (h[k][0] > 0) right.push(k); }
-  if (left.length) balloons.push({i: 0, j: pickFar(left), dir: [-1, 0]});    // reached by hopping up-left
-  if (right.length) balloons.push({i: pickFar(right), j: 0, dir: [0, -1]});  // reached by hopping up-right
+  if (left.length) balloons.push({i: 0, j: pickFar(left), dir: [-1, 0], color: '#ffd84a', dark: '#d99a00'});    // yellow; reached by hopping up-left
+  if (right.length) balloons.push({i: pickFar(right), j: 0, dir: [0, -1], color: '#ff8fc0', dark: '#d6407f'});  // pink; reached by hopping up-right
 }
 
-function balloonPos(d) {   // point on the platform where LamBert stands
+function balloonPos(d) {   // where LamBert's feet are while he hangs on this balloon's string
   return P(d.i + d.dir[0] + .5, d.j + d.dir[1] + .5, h[d.i][d.j] + BALLOON_LIFT);
 }
 
 function startRide(d) {
   pi = 0; pj = 0; queued = null; rest = 0;
   facing = {away: false, right: true};
-  const from = balloonPos(d), r0 = P(.5, .5, h[0][0]), top = [r0[0], r0[1] - A * RIDE_TOP];   // same path as ridePos()
-  const len = A + Math.hypot(top[0] - from[0], top[1] - (from[1] - A));          // up one cube-height, then across
-  ride = {d, t: 0, phase: 0, from, y: 0, v: 0, dur: len / (RIDE_SPEED * A)};   // constant speed: longer ride, longer time
+  const from = balloonPos(d), r0 = P(.5, .5, h[0][0]);
+  const minY = A * (BALLOON_HANG + BALLOON_STRING + .35 * BALLOON_R);   // lets the top third of the balloon float off the top of the screen over a tall rear stack
+  const mid = [from[0], Math.min(from[1], Math.max(from[1] - A, minY))];   // straight up one cube-height
+  const top = [r0[0], Math.max(r0[1] - A * RIDE_TOP, minY)];   // then across to RIDE_TOP cube-heights above the rear stack
+  const len1 = from[1] - mid[1], len2 = Math.hypot(top[0] - mid[0], top[1] - mid[1]);
+  ride = {d, t: 0, phase: 0, from, mid, top, len1, len2, drop: r0[1] - top[1], y: 0, v: 0, dur: Math.max(.3, (len1 + len2) / (RIDE_SPEED * A))};   // constant speed: longer ride, longer time
 }
 
 function ridePos() {
   const r0 = P(.5, .5, h[0][0]);
   if (ride.phase === 1) return [r0[0], r0[1] - ride.y];   // dropping onto the rear stack
   // Constant speed along the whole path (straight up, then straight across), with no pause at the corner
-  const t = Math.min(1, ride.t), mid = [ride.from[0], ride.from[1] - A], top = [r0[0], r0[1] - A * RIDE_TOP];   // top = RIDE_TOP cube-heights above the rear stack
-  const len1 = A, len2 = Math.hypot(top[0] - mid[0], top[1] - mid[1]), s = t * (len1 + len2);
+  const t = Math.min(1, ride.t), s = t * (ride.len1 + ride.len2);
   const lerp = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
-  return s < len1 ? lerp(ride.from, mid, s / len1) : lerp(mid, top, (s - len1) / (len2 || 1));
+  return s < ride.len1 ? lerp(ride.from, ride.mid, s / (ride.len1 || 1)) : lerp(ride.mid, ride.top, (s - ride.len1) / (ride.len2 || 1));
 }
 
 function updateRide(dt) {
   if (ride.phase === 0) {
     ride.t += dt / ride.dur;
-    if (ride.t >= 1) { ride.phase = 1; ride.y = A * RIDE_TOP; ride.v = 0; balloons = balloons.filter(x => x !== ride.d); }
+    if (ride.t >= 1) {   // the balloon pops, and LamBert drops onto the rear stack
+      const f = ridePos();
+      pops.push({x: f[0], y: f[1] - A * (BALLOON_HANG + BALLOON_STRING), t: 0, color: ride.d.color});
+      ride.phase = 1; ride.y = ride.drop; ride.v = 0; balloons = balloons.filter(x => x !== ride.d);
+    }
   } else {
     ride.v += 3000 * dt; ride.y -= ride.v * dt;
     if (ride.y <= 0) { ride = null; rest = LAMBERT_REST; landed(); }
   }
 }
 
-function drawBalloon(p) {
-  g.fillStyle = '#7a3b00'; g.beginPath(); g.ellipse(p[0], p[1] + 5, A * .62, A * .31, 0, 0, 7); g.fill();
-  g.fillStyle = '#ffbf47'; g.beginPath(); g.ellipse(p[0], p[1], A * .62, A * .31, 0, 0, 7); g.fill();
-  g.fillStyle = '#ff5d8f'; g.beginPath(); g.ellipse(p[0], p[1], A * .4, A * .2, 0, 0, 7); g.fill();
+// A balloon on a string. F is where LamBert's feet are (or will be) while he hangs on; sway is a gentle bob in pixels.
+function drawBalloon(F, d, sway, tail) {   // tail = extra string length (pixels) hanging below his grip, until he grabs on
+  const hx = F[0] + sway * .5, hy = F[1] - A * BALLOON_HANG;                        // the end of the string, where his front legs grip it
+  const cx = F[0] + sway, R = A * BALLOON_R, cy = hy - A * BALLOON_STRING + sway * .4;   // centre of the balloon
+  g.strokeStyle = '#6b6272'; g.lineWidth = 1.5;   // the string, with a little curve
+  const ey = hy + tail;   // before he grabs it, the string hangs lower than his grip
+  g.beginPath(); g.moveTo(cx, cy + R * 1.28); g.quadraticCurveTo(cx + R * .3, (cy + R * 1.28 + ey) / 2, hx, ey); g.stroke();
+  const grad = g.createRadialGradient(cx - R * .35, cy - R * .4, R * .1, cx, cy, R * 1.1);
+  grad.addColorStop(0, '#ffffff'); grad.addColorStop(.25, d.color); grad.addColorStop(1, d.dark);
+  g.beginPath(); g.ellipse(cx, cy, R * .9, R * 1.05, 0, 0, 7); g.fillStyle = grad; g.fill();
+  g.beginPath(); g.moveTo(cx, cy + R * 1.04); g.lineTo(cx - R * .14, cy + R * 1.28); g.lineTo(cx + R * .14, cy + R * 1.28); g.closePath(); g.fillStyle = d.dark; g.fill();   // knot
+  g.beginPath(); g.ellipse(cx - R * .35, cy - R * .45, R * .18, R * .3, .5, 0, 7); g.fillStyle = 'rgba(255,255,255,.6)'; g.fill();   // shiny spot
 }
 
-function newLevel() { do { gen(); } while (!solvable()); levelSeed = Math.random() * 1000; makeBalloons(); makeCracks(); enemies = []; spawnT = 3; place(); pause = false; }
+function drawPops() {   // bits of a burst balloon flying outward
+  for (const p of pops) {
+    const u = p.t / .4;
+    g.save(); g.globalAlpha = Math.max(0, 1 - u); g.fillStyle = p.color;
+    for (let n = 0; n < 10; n++) { const a = n * Math.PI / 5 + .2, dd = A * (.25 + .9 * u); g.beginPath(); g.arc(p.x + Math.cos(a) * dd, p.y + Math.sin(a) * dd, A * .07 * (1 - .5 * u), 0, 7); g.fill(); }
+    g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.beginPath(); g.arc(p.x, p.y, A * (.3 + .6 * u), 0, 7); g.stroke();
+    g.restore();
+  }
+}
+
+function newLevel() { do { gen(); } while (!solvable()); levelSeed = Math.random() * 1000; makeBalloons(); makeCracks(); pops = []; enemies = []; spawnT = 3; place(); pause = false; }
 
 const LAMBERT_HOP = 0.2, LAMBERT_REST = 0.2;   // hop time and pause after landing, in seconds
 let rest = 0, queued = null, ride = null, balloons = [];
-const BALLOON_LIFT = 1 / 4, RIDE_SPEED = 4.7, RIDE_TOP = 1.5;   // platform floats this far above its column (in cubes); ride speed in cube-heights per second; RIDE_TOP = how many cube-heights above the rear stack the ride ends
+const BALLOON_LIFT = 1 / 4;   // the string's end hangs this far (in cubes) above the column top, so LamBert leaps up a little to grab it
+const BALLOON_TAIL = 0.8;   // before he grabs it, the string hangs this much (in cube-heights) lower than his grip, so it clearly points at the column to jump from
+const BALLOON_HANG = 0.94, BALLOON_STRING = 0.85, BALLOON_R = 0.42;   // in cube-heights: his grip above his feet; balloon centre above his grip; balloon radius
+const RIDE_SPEED = 4.7, RIDE_TOP = 1.5;   // ride speed in cube-heights per second; RIDE_TOP = how many cube-heights above the rear stack his feet end up
+let pops = [];   // balloons that have burst
 function move(di, dj) {
   if (fall || pause || over || dying > 0 || ride) return;
   if (hop || rest > 0) { queued = [di, dj]; return; }   // remember one swipe or key press
@@ -391,14 +610,17 @@ function hopPos(p, t) {
 
 function landed() {
   if (enemies.some(e => !e.hp && !e.fall && !e.drop && e.i === pi && e.j === pj)) { die(); return; }
-  if (!seen[pi][pj]) { seen[pi][pj] = true; score += 25; }
+  if (!seen[pi][pj]) { seen[pi][pj] = true; addScore(GRASS_POINTS); }
   if (seen.every((r, i) => r.every((s, j) => s || h[i][j] === 0))) {
-    score += 100; pause = true; msg = 'Level clear!';
+    addScore(LEVEL_POINTS); pause = true; msg = 'Level clear!';
     setTimeout(() => { level++; msg = ''; newLevel(); }, 1300);
   }
 }
 
 function update(dt) {
+  for (const p of pops) p.t += dt;
+  if (noticeT > 0) noticeT -= dt;
+  pops = pops.filter(p => p.t < .4);
   if (dying > 0) {   // frozen for a moment after being hit, then the next life starts
     dying -= dt;
     if (dying <= 0) { dying = 0; enemies = []; spawnT = 3; if (lives <= 0) over = true; else place(); }
@@ -500,11 +722,12 @@ function blob(cx, cy, r, fill, line) {   // a filled circle with an optional thi
 }
 
 // ---- LamBert: a black-faced lamb (white wool, dark face, ears and legs) ----
-function drawPlayer(x, y) {   // (x, y) is the point where his feet touch
-  const r = A * .36, dx = facing.right ? 1 : -1, away = facing.away;
+function drawPlayer(x, y, still) {   // (x, y) is the point where his feet touch; still = standing and facing us (for the lives icons)
+  const r = A * .36, dx = still || facing.right ? 1 : -1, away = !still && facing.away;
   const WOOL = '#ffffff', OUT = '#c9c2d0', DARK = '#3f343c', PINK = '#e9a3b5';
   let stretch = 0, ears = 0;   // stretch: + tall in the air, - squashed after landing; ears: + hanging down, - flying up
-  if (ride) ears = 0;
+  if (still) ears = 0;
+  else if (ride) { ears = ride.phase === 1 ? -1 : 0; if (ride.phase === 0) stretch = .08; }   // ears fly up as he drops; hanging stretches him a little
   else if (hop) { const t = Math.min(1, hop.t); stretch = .16 * Math.sin(Math.PI * t); ears = Math.cos(Math.PI * t); }
   else if (fall) ears = -1;
   else if (rest > 0) { stretch = -.14 * rest / LAMBERT_REST; ears = .5 * rest / LAMBERT_REST; }
@@ -537,8 +760,23 @@ function drawPlayer(x, y) {   // (x, y) is the point where his feet touch
     blob(hx + dx * hr * .22, hy + hr * .3, hr * .1, PINK);                                   // nose
   }
   };
-  if (away) { drawHead(); drawBody(); } else { drawBody(); drawHead(); }   // from behind the body is nearer than the head, so it covers part of it
+  const hanging = !still && !!((ride && ride.phase === 0) || (hop && hop.balloon));
+  const drawArms = () => {   // front legs stretched up, gripping the string tight
+    g.strokeStyle = DARK; g.lineCap = 'round'; g.lineWidth = r * .32;
+    for (const s of [-1, 1]) { g.beginPath(); g.moveTo(s * r * .5, by - r * .15); g.lineTo(s * r * .13, by - r * 1.62); g.stroke(); }
+    g.lineCap = 'butt';
+    for (const s of [-1, 1]) blob(s * r * .12, by - r * 1.64, r * .2, DARK);   // hooves wrapped around the string
+  };
+  const arms = hanging ? drawArms : () => {};
+  if (away) { arms(); drawHead(); drawBody(); } else { drawBody(); arms(); drawHead(); }   // from behind the body is nearer than the head, so it covers part of it
   g.restore();
+}
+
+// One small picture of LamBert for each spare life (the life being played is not shown), under the score
+function drawLives() {
+  for (let n = 0; n < lives - 1; n++) {
+    g.save(); g.translate(40 + n * 34, 80); g.scale(.8, .8); drawPlayer(0, 0, true); g.restore();
+  }
 }
 
 // ---- Who is in front of whom: the thing nearer the viewer is drawn later, so it covers the other ----
@@ -571,14 +809,18 @@ function draw() {
   if (behind) drawMe();
   enemies.filter(behindWall).forEach(drawEnemy);
   drawCubes();
-  balloons.forEach(d => drawBalloon(ride && ride.d === d && ride.phase === 0 ? ridePos() : balloonPos(d)));
+  const bob = d => Math.sin(performance.now() / 500 + d.i * 1.3 + d.j * 1.7) * 2.5;   // balloons sway gently
+  balloons.forEach(d => { const riding = ride && ride.d === d && ride.phase === 0; drawBalloon(riding ? ridePos() : balloonPos(d), d, riding ? 0 : bob(d), riding ? 0 : A * BALLOON_TAIL); });
+  drawPops();
   const actors = enemies.filter(e => !behindWall(e)).map(e => ({d: enemyDepth(e), draw: () => drawEnemy(e)}));
   if (!behind) actors.push({d: playerDepth(), draw: drawMe});
   actors.sort((a, b) => a.d - b.d);   // farthest first
   actors.forEach(a => a.draw());
   g.fillStyle = '#1d3557'; g.font = '20px -apple-system,Helvetica,Arial,sans-serif'; g.textAlign = 'left';
-  g.fillText('Score ' + score + '    Lives ' + Math.max(lives, 0) + '    Level ' + level, 20, 34);
+  g.fillText('Score ' + score.toLocaleString('en-US') + '    Level ' + level, 20, 34);
   g.textAlign = 'right'; g.fillText('LamBert', W - 20, 34);
+  drawLives();
+  if (noticeT > 0) { g.textAlign = 'center'; g.fillStyle = '#b4531a'; g.font = 'bold 28px -apple-system,Helvetica,Arial,sans-serif'; g.fillText(notice, W / 2, 110); }
   g.textAlign = 'center'; g.fillStyle = '#4a6a8f'; g.font = '15px -apple-system,Helvetica,Arial,sans-serif';
   g.fillText('Hop with Q E Z C, the arrow keys, or a diagonal swipe', W / 2, H - 16);
   if (over || msg) {
@@ -595,7 +837,7 @@ addEventListener('keydown', e => {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   if (k === ' ') {
     e.preventDefault();
-    if (over) { over = false; score = 0; lives = LIVES; level = 1; newLevel(); }
+    if (over) startNewGame();
   } else if (K[k]) { e.preventDefault(); move(K[k][0], K[k][1]); }
 });
 
@@ -612,7 +854,7 @@ addEventListener('touchmove', e => {
   move(d[0], d[1]);
 }, {passive: false});
 addEventListener('touchend', () => {
-  if (!swiped && over) { over = false; score = 0; lives = LIVES; level = 1; newLevel(); }   // tap to restart
+  if (!swiped && over) startNewGame();   // tap to restart
 });
 
 newLevel();
