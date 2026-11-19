@@ -75,8 +75,8 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
       amount. Hopping to an empty column or off the structure: he falls and loses a life.
    3. Score: 25 per patch eaten, 1,000 per level cleared, 500 when Wolfy follows him off the edge. An extra life
       comes at 8,000 points and then every 14,000 points (22,000, 36,000, ...). He starts with 3 lives: the one
-      in play plus 2 spares, and the spares are shown as little pictures of LamBert under the score (as in
-      the original game), not as a number. Level clear = every column eaten.
+      in play plus 2 spares, and the spares are shown as little pictures of LamBert in a column down the far
+      left edge (as in the original game; a column hides the balloons least), not as a number. Level clear = every column eaten.
    4. As in the original, the rear-most column does NOT count when he starts or respawns there; he must hop
       away and land back on it (hence solvable() requires a way back up to it).
    5. Touching a monster kills him, any of these ways: he lands on it, it lands on him, or they hop toward
@@ -125,7 +125,10 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
      has a daisy), eaten patches turn pale yellowish-green khaki (not dirt brown: 'not a sickly brown'), sides
      are gray rock, LEFT sides lighter and RIGHT sides darker with only slight shade variation per rock, and
      just 2-3 thin cracks on the whole structure. Flat colors and simple shapes so everything stays readable on a
-     small phone screen.
+     small phone screen. The canvas is only as wide as the cube structure plus a small margin (its width is worked
+     out from its fixed height), so the structure fills the width of an iPhone held upright; the score and level
+     text, the 'Lamβert' logo (a joke spelling used ONLY in the logo; everywhere else the name is LamBert; dark letters on a little
+     cloud of wool, with a hand-drawn rose β) and the clouds all stay inside that width.
    - LamBert: chubby and cute, white wool, dark face/ears/legs, big head, turns to face the way he hops (front or
      back view, left or right), stretches in the air, squashes on landing, ears flop. From behind, his body is
      drawn over his head. Wolfy: lean, hungry, scary (long legs and snout, slanted brows, tongue and fang), turns
@@ -168,8 +171,9 @@ const WALK_STEPS = 100 * N * N * N; // random-walk steps used to build each leve
 const LIVES = 3;   // lives at the start, counting the one in play (the other 2 are shown as little lambs)
 
 const cv = document.getElementById('c'), g = cv.getContext('2d');
-const W = cv.width, H = cv.height;
-const A = Math.min((W - 60) / (2 * N * 0.866), (H - 150) / (2 * N)); // cube edge in pixels
+const H = cv.height;   // the height is fixed; the width is worked out from it so the cube structure nearly fills the width
+const A = (H - 150) / (2 * N);   // cube edge in pixels
+const W = Math.round(2 * N * 0.866 * A + 24); cv.width = W;   // canvas width = width of the cube structure plus a small margin
 const OX = W / 2, OY = H / 2 + 30;
 // Project grid point (x,y,z) to the screen. The viewer sits at large x, y, z.
 function P(x, y, z) { return [OX + (x - y) * A * 0.866, OY + (x + y) * A * 0.5 - z * A]; }
@@ -664,7 +668,7 @@ function cloud(x, y, s) {
 }
 function drawSky() {
   g.fillStyle = SKY; g.fillRect(0, 0, W, H);
-  cloud(105, 150, 1); cloud(660, 230, 1.15);   // two still clouds
+  cloud(W * .2, 170, 1); cloud(W * .82, 250, 1.15);   // two still clouds (the cube structure may partly cover them)
 }
 
 // A point on a face given three of its corners: a = bottom-left, b = bottom-right, d = top-left
@@ -772,10 +776,54 @@ function drawPlayer(x, y, still) {   // (x, y) is the point where his feet touch
   g.restore();
 }
 
-// One small picture of LamBert for each spare life (the life being played is not shown), under the score
+// The game's logo, right-aligned at xRight: dark letters on a little cloud of wool, with a rose-colored beta.
+// ("Lamβert" is a joke spelling used only here; everywhere else the name is LamBert.) The Greek letter is drawn
+// by hand so that it matches in every font.
+function drawLogo(xRight, baseY) {
+  const SIZE = 34, CAP = SIZE * .72;   // font size and the height of a capital letter
+  const LETTERS = ['L', 'a', 'm', 'β', 'e', 'r', 't'];
+  const INK = '#3f343c', ROSE = '#c75b7a';   // the same dark as LamBert's face; the beta is rose
+  g.save();
+  g.font = 'bold ' + SIZE + 'px "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif';
+  g.textAlign = 'center'; g.lineJoin = 'round'; g.lineCap = 'round';
+  const widths = LETTERS.map(ch => ch === 'β' ? SIZE * .62 : g.measureText(ch).width + 1);
+  const total = widths.reduce((a, b) => a + b, 0);
+  // the cloud of wool behind the letters: two rows of puffs with a solid band between them
+  const left = xRight - total - 10, right = xRight + 10, midY = baseY - CAP / 2, r1 = SIZE * .4;
+  const n = Math.round((right - left) / (r1 * 1.1));
+  for (let k = 0; k <= n; k++) {
+    const px = left + (right - left) * k / n, pr = r1 * (k % 2 ? .85 : 1);
+    blob(px, midY - r1 * .6, pr, '#fffdf6', '#c9c2d0'); blob(px, midY + r1 * .6, pr, '#fffdf6', '#c9c2d0');
+  }
+  blob(left, midY, r1 * .95, '#fffdf6', '#c9c2d0'); blob(right, midY, r1 * .95, '#fffdf6', '#c9c2d0');
+  g.fillStyle = '#fffdf6'; g.fillRect(left, midY - r1 * .6, right - left, r1 * 1.2);   // hides the lines between the puffs
+  let x = xRight - total;
+  LETTERS.forEach((ch, i) => {
+    g.save(); g.translate(x + widths[i] / 2, baseY);
+    if (ch === 'β') {
+      const w = widths[i] * .8, h = CAP;   // beta: a stem with two bowls, drawn as one thick rounded line
+      g.translate(-w / 2, -h);
+      g.strokeStyle = ROSE; g.lineWidth = SIZE * .15;
+      g.beginPath(); g.moveTo(.15 * w, 1.28 * h); g.lineTo(.15 * w, .28 * h);
+      g.bezierCurveTo(.15 * w, -.05 * h, .8 * w, -.05 * h, .8 * w, .25 * h);
+      g.bezierCurveTo(.8 * w, .42 * h, .55 * w, .5 * h, .4 * w, .5 * h);
+      g.bezierCurveTo(.95 * w, .5 * h, 1.0 * w, 1.0 * h, .5 * w, 1.0 * h);
+      g.bezierCurveTo(.35 * w, 1.0 * h, .25 * w, .97 * h, .15 * w, .92 * h);
+      g.stroke();
+    } else {
+      g.fillStyle = INK; g.fillText(ch, 0, 0);
+    }
+    g.restore();
+    x += widths[i];
+  });
+  g.restore();
+}
+
+// One small picture of LamBert for each spare life (the life being played is not shown), in a column down the far
+// left edge, as in the original game. A column there hides the balloons least.
 function drawLives() {
   for (let n = 0; n < lives - 1; n++) {
-    g.save(); g.translate(40 + n * 34, 80); g.scale(.8, .8); drawPlayer(0, 0, true); g.restore();
+    g.save(); g.translate(21, 94 + n * 32); g.scale(.8, .8); drawPlayer(0, 0, true); g.restore();
   }
 }
 
@@ -817,16 +865,18 @@ function draw() {
   actors.sort((a, b) => a.d - b.d);   // farthest first
   actors.forEach(a => a.draw());
   g.fillStyle = '#1d3557'; g.font = '20px -apple-system,Helvetica,Arial,sans-serif'; g.textAlign = 'left';
-  g.fillText('Score ' + score.toLocaleString('en-US') + '    Level ' + level, 20, 34);
-  g.textAlign = 'right'; g.fillText('LamBert', W - 20, 34);
+  g.fillText('Score ' + score.toLocaleString('en-US'), 14, 30);
+  g.fillText('Level ' + level, 14, 54);
+  drawLogo(W - 24, 44);
   drawLives();
-  if (noticeT > 0) { g.textAlign = 'center'; g.fillStyle = '#b4531a'; g.font = 'bold 28px -apple-system,Helvetica,Arial,sans-serif'; g.fillText(notice, W / 2, 110); }
+  if (noticeT > 0) { g.textAlign = 'center'; g.fillStyle = '#b4531a'; g.font = 'bold 28px -apple-system,Helvetica,Arial,sans-serif'; g.lineWidth = 5; g.strokeStyle = '#ffffff'; g.strokeText(notice, W / 2, 215); g.fillText(notice, W / 2, 215); }
   g.textAlign = 'center'; g.fillStyle = '#4a6a8f'; g.font = '15px -apple-system,Helvetica,Arial,sans-serif';
   g.fillText('Hop with Q E Z C, the arrow keys, or a diagonal swipe', W / 2, H - 16);
   if (over || msg) {
     g.fillStyle = '#b4531a'; g.font = 'bold 40px -apple-system,Helvetica,Arial,sans-serif';
-    g.fillText(over ? 'Game over' : msg, W / 2, 70);
-    if (over) { g.font = '18px -apple-system,Helvetica,Arial,sans-serif'; g.fillText('Press Space or tap to play again', W / 2, 100); }
+    g.lineWidth = 6; g.lineJoin = 'round'; g.strokeStyle = '#ffffff'; g.strokeText(over ? 'Game over' : msg, W / 2, 150);
+    g.fillText(over ? 'Game over' : msg, W / 2, 150);
+    if (over) { g.font = '18px -apple-system,Helvetica,Arial,sans-serif'; g.lineWidth = 4; g.strokeText('Press Space or tap to play again', W / 2, 182); g.fillText('Press Space or tap to play again', W / 2, 182); g.lineJoin = 'miter'; }
   }
 }
 
