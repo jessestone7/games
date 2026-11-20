@@ -7,9 +7,18 @@
 html,body{margin:0;height:100%;background:#bfe0fb;color:#1d3557;font-family:-apple-system,Helvetica,Arial,sans-serif}
 body{display:flex;align-items:center;justify-content:center}
 canvas{max-width:100%;max-height:100%;display:block}
+#nameBox{position:fixed;left:0;right:0;top:7%;display:flex;justify-content:center;z-index:5;touch-action:auto}
+#nameBox[hidden]{display:none}
+#nameBox .card{background:#fffdf6;border:2px solid #3d4650;border-radius:14px;padding:14px 18px 16px;width:min(300px,84vw);text-align:center;box-shadow:0 4px 18px rgba(0,0,0,.25)}
+#nameBox .big{font-size:22px;font-weight:bold;color:#b4531a}
+#nameBox input{font-size:18px;width:100%;box-sizing:border-box;margin-top:8px;padding:6px 8px;text-align:center;-webkit-user-select:text;user-select:text}
+#nameBox button{font-size:18px;margin-top:10px;padding:6px 26px}
 html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
 </style></head><body>
 <canvas id="c" width="760" height="680"></canvas>
+<div id="nameBox" hidden><div class="card"><div class="big">New high score!</div><div id="nameScore"></div>
+<input id="nameInput" maxlength="12" autocomplete="off" autocapitalize="words" spellcheck="false" enterkeyhint="done" placeholder="Type your name">
+<button id="nameOk">OK</button></div></div>
 <script>
 /* =====================================================================================
    LamBert: a Q*bert-style arcade game with an original twist, all in this one HTML file.
@@ -78,6 +87,13 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
       in play plus 2 spares, and the spares are shown as little pictures of LamBert in a column down the far
       left edge (as in the original game; a column hides the balloons least), not as a number.
       Level clear = every column eaten.
+      High scores: when the last life is lost, endGame() checks whether the score is in the best 10. If so, a
+      'New high score!' box (an HTML text field, so an iPhone keyboard works) asks for a name (up to 12 letters,
+      the last name used is filled in, empty = 'Anonymous'); Enter or OK saves it. The table (best first, with the level
+      reached, the new row highlighted) then shows on the Game over screen, and a restart is accepted only after a
+      short pause (overT) and after the name is entered. The table is kept in the browser's localStorage under 'lambert-scores'
+      (the last name under 'lambert-name'): it lives on each player's own device and browser, NOT on the web site that
+      hosts the file, so players never see each other's scores. (A shared leaderboard would need a server.)
    4. As in the original, the rear-most column does NOT count when he starts or respawns there; he must hop
       away and land back on it (hence solvable() requires a way back up to it).
    5. Touching a monster kills him, any of these ways: he lands on it, it lands on him, or they hop toward
@@ -157,6 +173,9 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
      text, the 'Lamβert' logo (a joke spelling used ONLY in the logo; everywhere else the name is LamBert; dark
      letters on a little irregular cloud of wool, with a hand-drawn rose β) and the clouds all stay inside that width.
      Other HUD: score and level at top left; the spare lives as a column of little lambs down the left edge.
+   - GRASS: the column tops now show small tufts of grass blades (18 per patch, TUFTS_PER_PATCH, growing out to within GRASS_MARGIN of the patch edge; three greens; constants GRASS_STYLE, BLADE_COLORS) on the
+     bright green top, and an eaten patch keeps a few short khaki stubs. The ORIGINAL look is kept: set GRASS_STYLE = 'flat'
+     for a plain flat green top (GRASS, #62d24a, thin dark outline) with the occasional daisy, and plain flat khaki when eaten.
    - LamBert: chubby and cute, white wool, dark face/ears/legs, big head, turns to face the way he hops (front or
      back view, left or right), stretches in the air, squashes on landing, ears flop. From behind, his body is
      drawn over his head. Wolfy: lean, hungry, scary (long legs and snout, slanted brows, tongue and fang), turns
@@ -174,22 +193,22 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
    10. HOW THE CODE IS ORGANIZED (roughly top to bottom)
    -----------------------------------------------------
    Constants (N, timings, colors) -> canvas size and projection P() -> gen() board generator -> solvable() ->
-   place/newLevel -> move() (input) -> addScore() (points and extra lives), landed(), die(), update() (game logic,
+   place/newLevel -> move() (input) -> addScore() (points and extra lives), high scores (loadScores, qualifies, endGame, submitName), landed(), die(), update() (game logic,
    one call per frame) -> monsters (spawn, decide, chase, reachableFrom, doomedHop, hopTo, updateEnemies,
    checkSwap) -> balloons and the ride (makeBalloons, startRide, updateRide, ridePos) -> sound (sound, tone,
-   noiseBurst, loadClips, playClip, toggleSound, drawSpeaker) -> keyboard and touch handlers -> drawing (drawSky, drawCubes,
+   noiseBurst, loadClips, playClip, toggleSound, drawSpeaker) -> keyboard and touch handlers -> drawing (drawSky, drawCubes (with tufts), drawScoreTable,
    drawPlayer = LamBert, drawWolfy, drawCostume, drawRedBall, drawBalloon, drawPops, drawLogo, drawLives, draw)
    -> the frame loop. (Function declarations are hoisted, so the order in the file is only roughly this.)
    Main state: c, h, seen (eaten patches), pi/pj (LamBert's column), hop, fall, ride, bump, rest, queued, facing,
    enemies (kinds 'red', 'costume', 'wolfy'), balloons, pops, cracks, levelSeed, score, lives, level, dying,
-   pause, over, audio. Characters are drawn from the point where their feet touch a column top. Naming: LamBert's
+   pause, over, highScores, entering, lastRank, overT, audio. Characters are drawn from the point where their feet touch a column top. Naming: LamBert's
    constants start LAMBERT_, Wolfy's WOLFY_, the balloons' BALLOON_; a 'costume' is the woolly ball that becomes Wolfy.
 
    11. IDEAS NOT DONE YET
    ----------------------
    Sound effects are done (see 7b) but the author of the code has never heard them: expect to tune volumes.
-   Still open: difficulty that grows with the level (faster or more monsters), a high score (it could be kept in
-   localStorage, which works in the published page), and tuning after more play-testing. Worth re-checking after
+   Still open: difficulty that grows with the level (faster or more monsters), more variety in the higher levels (new
+   enemies, new looks; the owner is considering it), and tuning after more play-testing. Worth re-checking after
    any change: how the screen fits on an iPhone held upright, that balloons are not hidden by cubes on odd
    shapes, and that every level can still be finished. Visual polish is done in small steps and the owner
    reviews each step before the next.
@@ -396,6 +415,44 @@ function addScore(points) {
   score += points;
   while (score >= nextExtraLife) { lives++; nextExtraLife += EXTRA_LIFE_EVERY; notice = 'Extra life!'; noticeT = 1.5; sound('extralife'); }
 }
+// ---- High scores: the best 10, each with a name, kept in this browser's localStorage (see section 4 of the comment) ----
+const SCORES_KEY = 'lambert-scores', NAME_KEY = 'lambert-name', MAX_SCORES = 10, NAME_MAX = 12;
+const nameBox = document.getElementById('nameBox'), nameInput = document.getElementById('nameInput');
+let highScores = [];       // best first: {name, score, level}
+let entering = false;      // true while the player is typing a name (the game's keys and taps are off)
+let lastRank = -1;         // row of the table to highlight: the score just entered
+let overT = 0;             // seconds before Game over can be dismissed, so a stray tap or key does not restart at once
+function loadScores() {
+  try {
+    const a = JSON.parse(localStorage.getItem(SCORES_KEY));
+    if (Array.isArray(a)) return a.filter(e => e && typeof e.name === 'string' && typeof e.score === 'number').slice(0, MAX_SCORES);
+  } catch (err) {}
+  return [];
+}
+function qualifies(sc) { return sc > 0 && (highScores.length < MAX_SCORES || sc > highScores[highScores.length - 1].score); }
+function endGame() {       // called when the last life is lost
+  over = true; overT = 1; lastRank = -1;
+  highScores = loadScores();   // read again: another tab may have added scores
+  if (qualifies(score)) {
+    entering = true;
+    document.getElementById('nameScore').textContent = 'Score ' + score.toLocaleString('en-US');
+    try { nameInput.value = localStorage.getItem(NAME_KEY) || ''; } catch (err) { nameInput.value = ''; }
+    nameBox.hidden = false; nameInput.focus(); nameInput.select();   // (an iPhone keyboard only opens when the player taps the box)
+  }
+}
+function submitName() {
+  if (!entering) return;
+  const name = nameInput.value.trim().slice(0, NAME_MAX) || 'Anonymous';
+  let at = highScores.findIndex(e => score > e.score);   // a tie goes below the older score
+  if (at < 0) at = highScores.length;
+  highScores.splice(at, 0, {name: name, score: score, level: level});
+  highScores = highScores.slice(0, MAX_SCORES); lastRank = at;
+  try { localStorage.setItem(SCORES_KEY, JSON.stringify(highScores)); localStorage.setItem(NAME_KEY, name); } catch (err) {}
+  entering = false; overT = .8; nameBox.hidden = true; nameInput.blur();
+}
+document.getElementById('nameOk').addEventListener('click', submitName);
+highScores = loadScores();
+
 function startNewGame() {   // after Game over
   over = false; score = 0; lives = LIVES; level = 1; nextExtraLife = EXTRA_LIFE_FIRST; noticeT = 0;
   newLevel();
@@ -688,7 +745,7 @@ function update(dt) {
   pops = pops.filter(p => p.t < .4);
   if (dying > 0) {   // frozen for a moment after being hit, then the next life starts
     dying -= dt;
-    if (dying <= 0) { dying = 0; enemies = []; spawnT = 3; if (lives <= 0) over = true; else place(); }
+    if (dying <= 0) { dying = 0; enemies = []; spawnT = 3; if (lives <= 0) endGame(); else place(); }
     return;
   }
   updateEnemies(dt);
@@ -704,7 +761,7 @@ function update(dt) {
     }
   } else if (fall) {
     fall.v += 2400 * dt; fall.y += fall.v * dt;
-    if (fall.y > H + 60) { fall = null; lives--; if (lives <= 0) over = true; else place(); }
+    if (fall.y > H + 60) { fall = null; lives--; if (lives <= 0) endGame(); else place(); }
   }
 }
 
@@ -716,6 +773,15 @@ function poly(pts, fill) {
 
 // ---- Meadow look: grass-topped rock columns floating in a pale blue sky ----
 const GRASS = '#62d24a', EATEN = '#a39657', OUTLINE = '#3d4650';
+// How the grass is drawn. 'tufts' (the current look): the flat green top gets small tufts of grass blades, and an eaten
+// patch keeps only a few short khaki stubs. 'flat' is the ORIGINAL look, kept in case the owner wants it back: a plain
+// bright green top face (GRASS) with its thin dark outline, about 1 in 6 uneaten tops with a small white daisy, and eaten
+// tops plain khaki (EATEN), with no blades at all.
+const GRASS_STYLE = 'tufts';
+const TUFTS_PER_PATCH = 18;   // tufts of grass on each uneaten patch (it was 9; doubled at the owner's request)
+const GRASS_MARGIN = 0.04;   // how close to the edge of a patch the tufts may grow, as a fraction of its width (it was 0.12, which left a bare border; 0 = right up to the edge)
+const BLADE_COLORS = ['#3f9a35', '#4fb83f', '#8be36a'];   // dark, medium, light green blades
+const STUBBLE_COLORS = ['#8c8140', '#b5a860'];            // short blades left on an eaten patch
 let levelSeed = 0;   // changes every level, so flowers, rock shades and cracks differ from level to level
 const hh = (i, j, k, s) => { const x = Math.sin(i * 127.1 + j * 311.7 + k * 74.7 + s * 19.3 + levelSeed * 53.1) * 43758.5453; return x - Math.floor(x); };   // repeatable "random" number, 0 to 1
 
@@ -755,6 +821,23 @@ function crack(a, b, d, s) {   // a thin crack across a rock face
   g.strokeStyle = 'rgba(30,35,45,.35)'; g.stroke();
   g.strokeStyle = OUTLINE;
 }
+function tufts(i, j, z, eaten) {   // little tufts of grass blades on top of the column at (i, j); z is the height of the top face
+  const n = eaten ? 5 : TUFTS_PER_PATCH;
+  g.lineCap = 'round';
+  for (let t = 0; t < n; t++) {
+    const base = P(i + GRASS_MARGIN + (1 - 2 * GRASS_MARGIN) * hh(i, j, 0, 10 + t * 3), j + GRASS_MARGIN + (1 - 2 * GRASS_MARGIN) * hh(i, j, 0, 11 + t * 3), z);
+    const blades = eaten ? 3 : (hh(i, j, 0, 12 + t * 3) > .5 ? 4 : 3);
+    for (let b = 0; b < blades; b++) {
+      const lean = (b - (blades - 1) / 2) * A * .05 + (hh(i, j, t, 20 + b) - .5) * A * .05;   // blades fan out a little
+      const ht = A * (eaten ? .04 + .04 * hh(i, j, t, 30 + b) : .16 + .17 * hh(i, j, t, 30 + b));
+      g.strokeStyle = eaten ? STUBBLE_COLORS[(b + t) % 2] : BLADE_COLORS[(b + t) % 3];
+      g.lineWidth = eaten ? 1 : 1.7;
+      g.beginPath(); g.moveTo(base[0] + lean * .3, base[1]);
+      g.quadraticCurveTo(base[0] + lean * .8, base[1] - ht * .6, base[0] + lean * 1.6, base[1] - ht); g.stroke();
+    }
+  }
+  g.lineCap = 'butt'; g.lineWidth = 1; g.strokeStyle = OUTLINE;   // put back what drawCubes() uses for the rock outlines
+}
 function flower(i, j, z) {   // a small daisy on an uneaten patch of grass
   const p = P(i + .3 + .4 * hh(i, j, 0, 5), j + .3 + .4 * hh(i, j, 0, 6), z), r = A * .08;
   g.fillStyle = '#fff';
@@ -770,6 +853,7 @@ function drawCubes() {
   for (const [i, j, k] of list) {
     const top = k === h[i][j] - 1, v = hh(i, j, k, 1) * 5 - 2.5;   // v varies each rock's shade a little
     poly([P(i, j, k + 1), P(i + 1, j, k + 1), P(i + 1, j + 1, k + 1), P(i, j + 1, k + 1)], top && seen[i][j] ? EATEN : GRASS);
+    if (top && GRASS_STYLE === 'tufts') tufts(i, j, k + 1, seen[i][j]);
     if (top && !seen[i][j] && hh(i, j, 0, 3) < .17) flower(i, j, k + 1);
     poly([P(i + 1, j, k), P(i + 1, j + 1, k), P(i + 1, j + 1, k + 1), P(i + 1, j, k + 1)], `hsl(215, 9%, ${44 + v}%)`);   // right face (darker rock)
     if (cracks.has(i + ',' + j + ',' + k + ',R')) crack(P(i + 1, j, k), P(i + 1, j + 1, k), P(i + 1, j, k + 1), hh(i, j, k, 2) * .6);
@@ -913,6 +997,26 @@ function enemyDepth(e) {   // the extra .01 puts a monster in front of LamBert w
   return (e.hp ? hopDepth(e.hp) : depth(e.i + .5, e.j + .5, h[e.i][e.j])) + .01;
 }
 
+function drawScoreTable() {   // the Game over panel: the high score table (the name box is on screen instead while a name is being typed)
+  const rows = Math.max(1, highScores.length), pw = Math.min(W - 24, 360), px = (W - pw) / 2, top = 96;
+  const prompt = 226 + rows * 26 + 20, bottom = prompt + 20, F = 'px -apple-system,Helvetica,Arial,sans-serif';
+  g.fillStyle = 'rgba(255,255,255,.9)'; g.strokeStyle = OUTLINE; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(px + 16, top); g.arcTo(px + pw, top, px + pw, bottom, 16); g.arcTo(px + pw, bottom, px, bottom, 16);
+  g.arcTo(px, bottom, px, top, 16); g.arcTo(px, top, px + pw, top, 16); g.closePath(); g.fill(); g.stroke();
+  g.textAlign = 'center'; g.fillStyle = '#1d3557'; g.font = 'bold 22' + F; g.fillText('High scores', W / 2, 200);
+  if (!highScores.length) { g.font = '18' + F; g.fillText('No scores yet', W / 2, 242); }
+  highScores.forEach((e, n) => {
+    const y = 226 + n * 26 + 18;
+    if (n === lastRank) { g.fillStyle = '#ffe27a'; g.fillRect(px + 10, y - 18, pw - 20, 25); }
+    g.fillStyle = '#1d3557'; g.font = '18' + F;
+    g.textAlign = 'right'; g.fillText((n + 1) + '.', px + 40, y);
+    g.textAlign = 'left'; g.fillText(e.name, px + 50, y);
+    g.textAlign = 'right'; g.fillText(e.score.toLocaleString('en-US'), px + pw - 62, y);
+    g.fillStyle = '#4a6a8f'; g.font = '14' + F; g.fillText(e.level ? 'L' + e.level : '', px + pw - 16, y);
+  });
+  g.textAlign = 'center'; g.fillStyle = '#b4531a'; g.font = 'bold 18' + F; g.fillText('Press Space or tap to play again', W / 2, prompt + 8);
+}
+
 function draw() {
   drawSky();
   // Past a rear wall he is behind the cube structure, so draw him before the cubes
@@ -948,10 +1052,11 @@ function draw() {
   g.textAlign = 'center'; g.fillStyle = '#4a6a8f'; g.font = '15px -apple-system,Helvetica,Arial,sans-serif';
   g.fillText('Hop with Q E Z C, the arrow keys, or a diagonal swipe', W / 2, H - 16);
   if (over || msg) {
+    if (over && !entering) drawScoreTable();
     g.fillStyle = '#b4531a'; g.font = 'bold 40px -apple-system,Helvetica,Arial,sans-serif';
     g.lineWidth = 6; g.lineJoin = 'round'; g.strokeStyle = '#ffffff'; g.strokeText(over ? 'Game over' : msg, W / 2, 150);
     g.fillText(over ? 'Game over' : msg, W / 2, 150);
-    if (over) { g.font = '18px -apple-system,Helvetica,Arial,sans-serif'; g.lineWidth = 4; g.strokeText('Press Space or tap to play again', W / 2, 182); g.fillText('Press Space or tap to play again', W / 2, 182); g.lineJoin = 'miter'; }
+    if (over) g.lineJoin = 'miter';
   }
 }
 
@@ -975,7 +1080,7 @@ function unlockAudio() {   // browsers only allow sound after a key press or a t
 const clipBuffers = {};
 const SOUND_BOOST = 2.5;    // multiplies the volume of every synthesized sound (tone() and noiseBurst()); the owner found them too quiet next to the bleat. Raise or lower it to change them all at once
 const BLEAT_VOLUME = 0.2;   // volume of the recorded bleat when LamBert falls (0 to 1); the other sounds are quiet, so tune by ear
-const GROWL_VOLUME = 0.3;  // volume of the recorded growl while Wolfy's costume shakes (0 to 1)
+const GROWL_VOLUME = 0.3;   // volume of the recorded growl while Wolfy's costume shakes (0 to 1)
 function loadClips() {
   if (!audio.ctx || typeof SOUND_CLIPS === 'undefined') return;
   for (const name in SOUND_CLIPS) {
@@ -1059,12 +1164,13 @@ function drawSpeaker() {   // the mute button: a little speaker, with sound wave
 const K = {q: [-1, 0], e: [0, -1], c: [1, 0], z: [0, 1],
            ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowRight: [1, 0], ArrowDown: [0, 1]};
 addEventListener('keydown', e => {
+  if (entering) { if (e.key === 'Enter') submitName(); return; }   // typing a name: the game's keys are off
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
   unlockAudio();
   if (k === 'm') { toggleSound(); return; }
   if (k === ' ') {
     e.preventDefault();
-    if (over) startNewGame();
+    if (over && overT <= 0) startNewGame();
   } else if (K[k]) { e.preventDefault(); move(K[k][0], K[k][1]); }
 });
 
@@ -1082,13 +1188,14 @@ addEventListener('touchmove', e => {
 }, {passive: false});
 addEventListener('touchend', () => {
   unlockAudio();
-  if (!swiped && over) startNewGame();   // tap to restart
+  if (!swiped && over && !entering && overT <= 0) startNewGame();   // tap to restart
 });
 
 newLevel();
 let last = performance.now();
 (function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (overT > 0) overT -= dt;
   update(dt); draw(); requestAnimationFrame(frame);
 })(last);
 </script>
