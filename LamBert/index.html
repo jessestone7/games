@@ -47,7 +47,7 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
    - The imaginary floor and the two imaginary back walls are INVISIBLE. Hopping onto an empty column or off
      the structure means falling to your doom. Falling out through a back wall is drawn BEHIND the cubes.
    - Solvability: some random shapes cannot be finished (LamBert may hop up only 1 level, so he can get
-     stranded below a cliff). newLevel keeps generating until solvable() passes (about 80% of N=5 shapes do).
+     stranded below a cliff). newLevel keeps generating until solvable() passes (about 80% of N=5 shapes do, a little fewer at N=6).
      solvable() = for every pair of columns, one can be reached from the other without falling (so a route
      covering everything exists), AND some column can reach the rear-most one again (see rule 4 below).
      Even a solvable level can require careful ordering; that is intended.
@@ -69,14 +69,15 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
    ----------------
    1. Controls: keys Q (up-left), E (up-right), Z (down-left), C (down-right), or the arrow keys rotated
       45 degrees (left = up-left, up = up-right, down = down-left, right = down-right); on a touch screen a
-      diagonal swipe anywhere; tap to restart after Game over. (We decided against on-screen arrow buttons
+      diagonal swipe anywhere; tap or press Space to restart after Game over; the M key or the speaker button (bottom right) mutes sound. (We decided against on-screen arrow buttons
       and against tapping a column: swipes keep the risk of falling, which is part of the fun.)
-   2. LamBert may hop UP at most 1 level (a higher hop is simply blocked), or stay level, or go DOWN any
-      amount. Hopping to an empty column or off the structure: he falls and loses a life.
+   2. LamBert may hop UP at most 1 level (a higher hop is blocked: he makes a little hop in place so the player
+      sees he tried), or stay level, or go DOWN any amount. Hopping to an empty column or off the structure: he falls and loses a life.
    3. Score: 25 per patch eaten, 1,000 per level cleared, 500 when Wolfy follows him off the edge. An extra life
       comes at 8,000 points and then every 14,000 points (22,000, 36,000, ...). He starts with 3 lives: the one
       in play plus 2 spares, and the spares are shown as little pictures of LamBert in a column down the far
-      left edge (as in the original game; a column hides the balloons least), not as a number. Level clear = every column eaten.
+      left edge (as in the original game; a column hides the balloons least), not as a number.
+      Level clear = every column eaten.
    4. As in the original, the rear-most column does NOT count when he starts or respawns there; he must hop
       away and land back on it (hence solvable() requires a way back up to it).
    5. Touching a monster kills him, any of these ways: he lands on it, it lands on him, or they hop toward
@@ -84,7 +85,7 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
 
    5. MONSTERS (all hop one column at a time, only onto columns that have cubes)
    -----------------------------------------------------------------------------
-   - Spawning: every 4 s (SPAWN_EVERY), if fewer than 3 monsters are on the board, a ball drops straight down
+   - Spawning: the first ball 3 s after a level starts, then every 4 s (SPAWN_EVERY), if fewer than 3 monsters are on the board, a ball drops straight down
      from the top of the screen onto a column next to the rear-most one (never onto it, so a LamBert who
      stands still there is safe). Red ball: hops randomly toward the viewer and falls off the bottom.
      Costume ball (Wolfy in disguise): same, but when it reaches a column with no way on it sits and shakes
@@ -119,6 +120,32 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
    LamBert: hop 0.2 + rest 0.2 (one key press during the rest is remembered). Balls: hop 0.25 + rest 0.35.
    Wolfy: hop 0.25 + rest 0.25. Original-style feel: LamBert only slightly faster than the monsters.
 
+   7b. SOUND
+   ---------
+   The owner prefers simple synthesized bleeps and bloops, like 1980s video games, so MOST sounds are made in code
+   with the Web Audio API: a soft tick for each hop (there is deliberately NO sound for eating grass), a very quiet
+   bounce for the balls (many balls bounce at once, so it is also limited to one every 90 ms), a soft pop for the
+   balloon (the owner found the first one too harsh and loud), a yelp when Wolfy falls, a bleat ('baa') when a monster catches LamBert, a little bonk when he tries to hop too
+   high, a chime for an extra life and a jingle for a cleared level. No music.
+   VOLUMES: the synthesized sounds all go through tone() and noiseBurst(), which multiply their volume by SOUND_BOOST
+   (2.5; the owner found them too quiet next to the recorded bleat). The bleat (BLEAT_VOLUME) and growl (GROWL_VOLUME)
+   are the owner's chosen levels: the growl is 'perfect', so leave both alone when changing SOUND_BOOST.
+   RECORDED CLIPS: only TWO sounds are real recordings, because the owner wanted them to sound natural:
+   'bleat' (LamBert falls off the cube structure; BLEAT_VOLUME) and 'growl' (Wolfy growls while the costume shakes,
+   starting GROWL_LEAD seconds before it pops so the growl ends as it bursts; GROWL_VOLUME). The owner tried a
+   recorded howl and a recorded chomp and did not like them, so they were removed: do not add them back. There is
+   no howl at all now (the growl is the only sound as the costume bursts), and no sound for eating grass.
+   A clip is an mp3 stored as base64 text inside the SOUND_CLIPS block at the very bottom of the file (a second
+   <script> tag), so the game stays ONE file that works from GitHub Pages or by double-click. loadClips() decodes
+   them when sound is first unlocked; playClip(name, vol) plays one; the bleat falls back to the old synthesized
+   falling whistle if its clip is not ready. Clips are small (about 7 KB each); to shrink a clip: ffmpeg -i in.mp3
+   -ac 1 -ar 22050 -b:a 48k out.mp3. Use only CC0 / public-domain clips (the owner has asked about the App Store
+   and ads). To add a clip: base64-encode the mp3, add a key to SOUND_CLIPS, add a VOLUME constant, and use
+   playClip() in sound().
+   A speaker button (bottom right; the M key too) mutes and unmutes, and the choice is remembered. Sound starts ON
+   on a computer and OFF on a touch device (people play in public). Browsers only allow sound after the first key
+   press or touch, and an iPhone's silent switch may mute it.
+
    8. LOOK AND STYLE DECISIONS
    ---------------------------
    - Meadow of rock columns in a pale blue sky with two still fluffy clouds: tops are tasty green (about 1 in 6
@@ -127,8 +154,9 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
      just 2-3 thin cracks on the whole structure. Flat colors and simple shapes so everything stays readable on a
      small phone screen. The canvas is only as wide as the cube structure plus a small margin (its width is worked
      out from its fixed height), so the structure fills the width of an iPhone held upright; the score and level
-     text, the 'Lamβert' logo (a joke spelling used ONLY in the logo; everywhere else the name is LamBert; dark letters on a little
-     cloud of wool, with a hand-drawn rose β) and the clouds all stay inside that width.
+     text, the 'Lamβert' logo (a joke spelling used ONLY in the logo; everywhere else the name is LamBert; dark
+     letters on a little irregular cloud of wool, with a hand-drawn rose β) and the clouds all stay inside that width.
+     Other HUD: score and level at top left; the spare lives as a column of little lambs down the left edge.
    - LamBert: chubby and cute, white wool, dark face/ears/legs, big head, turns to face the way he hops (front or
      back view, left or right), stretches in the air, squashes on landing, ears flop. From behind, his body is
      drawn over his head. Wolfy: lean, hungry, scary (long legs and snout, slanted brows, tongue and fang), turns
@@ -145,19 +173,26 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
 
    10. HOW THE CODE IS ORGANIZED (roughly top to bottom)
    -----------------------------------------------------
-   Constants (N, timings, colors) -> projection P() -> gen() board generator -> solvable() -> place/newLevel ->
-   move() (input) -> addScore() (points and extra lives), landed(), die(), update() (game logic, one call per frame) -> monsters (spawn, decide,
-   chase, reachableFrom, hopTo, updateEnemies, checkSwap) -> balloons and the ride -> drawing (drawSky, drawCubes,
-   drawPlayer = LamBert, drawWolfy, drawCostume, drawRedBall, drawBalloon, draw) -> keyboard and touch handlers ->
-   the frame loop. Main state: c, h, seen (eaten patches), pi/pj (LamBert's column), hop, fall, ride, rest,
-   queued, facing, enemies, balloons, pops, cracks, levelSeed, score, lives, level, dying, pause, over.
-   Characters are drawn from the point where their feet touch a column top.
+   Constants (N, timings, colors) -> canvas size and projection P() -> gen() board generator -> solvable() ->
+   place/newLevel -> move() (input) -> addScore() (points and extra lives), landed(), die(), update() (game logic,
+   one call per frame) -> monsters (spawn, decide, chase, reachableFrom, doomedHop, hopTo, updateEnemies,
+   checkSwap) -> balloons and the ride (makeBalloons, startRide, updateRide, ridePos) -> sound (sound, tone,
+   noiseBurst, loadClips, playClip, toggleSound, drawSpeaker) -> keyboard and touch handlers -> drawing (drawSky, drawCubes,
+   drawPlayer = LamBert, drawWolfy, drawCostume, drawRedBall, drawBalloon, drawPops, drawLogo, drawLives, draw)
+   -> the frame loop. (Function declarations are hoisted, so the order in the file is only roughly this.)
+   Main state: c, h, seen (eaten patches), pi/pj (LamBert's column), hop, fall, ride, bump, rest, queued, facing,
+   enemies (kinds 'red', 'costume', 'wolfy'), balloons, pops, cracks, levelSeed, score, lives, level, dying,
+   pause, over, audio. Characters are drawn from the point where their feet touch a column top. Naming: LamBert's
+   constants start LAMBERT_, Wolfy's WOLFY_, the balloons' BALLOON_; a 'costume' is the woolly ball that becomes Wolfy.
 
    11. IDEAS NOT DONE YET
    ----------------------
-   Sound effects (Web Audio, no files: a chomping sound when LamBert eats grass; a pop, a howl, a boing),
-   difficulty that grows with the level, a high score, and tuning after more play-testing. Visual polish is
-   being done in small steps and the owner reviews each step before the next.
+   Sound effects are done (see 7b) but the author of the code has never heard them: expect to tune volumes.
+   Still open: difficulty that grows with the level (faster or more monsters), a high score (it could be kept in
+   localStorage, which works in the published page), and tuning after more play-testing. Worth re-checking after
+   any change: how the screen fits on an iPhone held upright, that balloons are not hidden by cubes on odd
+   shapes, and that every level can still be finished. Visual polish is done in small steps and the owner
+   reviews each step before the next.
 
    12. HOW TO WORK WITH THE OWNER
    ------------------------------
@@ -165,6 +200,20 @@ html,body{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;us
    small steps, and he describes problems precisely (a good sign: trust his observations). Keep every tunable
    number a named constant, keep the code readable (descriptive names, comments), and explain the reasoning
    behind changes. Say plainly when something could not be tested.
+
+   13. PRACTICAL NOTES FOR WHOEVER EDITS THIS FILE
+   -----------------------------------------------
+   - The game cannot be seen or played while it is being edited, only read and syntax-checked (for example in
+     node: take the text between the script tags and run it through new Function(...)). Re-read the code around
+     any change, and ask the owner to play it and report back.
+   - Make small, exact edits rather than rewriting the file, and keep THIS COMMENT up to date with every change
+     in rules, numbers or look: it is the only memory a brand-new chat has. (Some notes also live in Claude's
+     memory, but this comment is the authority.)
+   - Names: the game and its lamb are LamBert everywhere except the logo (Lamβert). The wolf is Wolfy. The
+     original game's snake is Coily: never use that name. Wolfy's disguise is the 'costume' ball.
+   - Decisions the owner has already made and does not want reopened without a good reason: swipes (no arrow
+     buttons, no tap-on-column), balloons (no baskets, no flying discs), N = 6, a chubby black-faced LamBert,
+     a lean scary Wolfy, no background music.
    ===================================================================================== */
 const N = 6;                       // size of the big cube: change this to try other sizes
 const WALK_STEPS = 100 * N * N * N; // random-walk steps used to build each level
@@ -201,7 +250,7 @@ function gen() {
 }
 
 function place() {            // drop onto the top cube of the rearmost stack
-  pi = 0; pj = 0; hop = null; fall = null; rest = 0; queued = null; ride = null;
+  pi = 0; pj = 0; hop = null; fall = null; rest = 0; queued = null; ride = null; bump = null;
   facing = {away: false, right: true};
 }
 // A level is finishable if, for every pair of columns, one can be reached from the other
@@ -231,6 +280,7 @@ function solvable() {
 const ENEMY_HOP = 0.25;      // seconds a monster hop takes
 const COSTUME_CHANCE = 0.2, COSTUME_BOOST = 0.2;   // chance of a costume ball, plus this much more for every red ball since the last costume
 let redsSinceCostume = 0;
+const GROWL_LEAD = 1.1;   // the growl clip is about 1.1 s long, so it starts this long before the costume pops (the shaking lasts 1.5 s)
 const POP_TIME = 0.45;   // seconds the wool puffs fly when Wolfy's costume comes off
 const BALL_REST = 0.35, WOLFY_REST = 0.25;   // pause after each landing, in seconds
 const STRANDED_EXTRA_HOPS = 7;   // a stranded Wolfy hops (the number of columns he is confined to + this many) more times, then jumps to his doom
@@ -344,7 +394,7 @@ const EXTRA_LIFE_FIRST = 8000, EXTRA_LIFE_EVERY = 14000;
 let nextExtraLife = EXTRA_LIFE_FIRST, notice = '', noticeT = 0;   // noticeT = seconds left to show the 'Extra life!' message
 function addScore(points) {
   score += points;
-  while (score >= nextExtraLife) { lives++; nextExtraLife += EXTRA_LIFE_EVERY; notice = 'Extra life!'; noticeT = 1.5; }
+  while (score >= nextExtraLife) { lives++; nextExtraLife += EXTRA_LIFE_EVERY; notice = 'Extra life!'; noticeT = 1.5; sound('extralife'); }
 }
 function startNewGame() {   // after Game over
   over = false; score = 0; lives = LIVES; level = 1; nextExtraLife = EXTRA_LIFE_FIRST; noticeT = 0;
@@ -355,11 +405,12 @@ const DEATH_PAUSE = 0.5;   // seconds everything freezes after LamBert is hit
 let dying = 0;
 function die() {
   if (dying > 0) return;
-  dying = DEATH_PAUSE; lives--;
+  dying = DEATH_PAUSE; lives--; sound('death');
 }
 
 function arrived(e) {
   e.wait = e.kind === 'wolfy' ? WOLFY_REST : BALL_REST;
+  sound(e.kind === 'wolfy' ? 'wolfstep' : 'bounce');   // balls bounce very quietly: there are many of them
   if (e.kind === 'costume' && !FWD.some(m => legal(e.i, e.j, m[0], m[1], 99))) e.hatch = 1.5;   // at the bottom it sits and shakes for 1.5 seconds, then the costume pops off
   if (e.i === pi && e.j === pj && !hop && !fall && !ride) die();
 }
@@ -382,10 +433,12 @@ function updateEnemies(dt) {
       e.hp.t += dt / ENEMY_HOP;
       if (e.hp.t >= 1) {
         if (e.hp.ok) { e.i = e.hp.ti; e.j = e.hp.tj; e.hp = null; arrived(e); }
-        else { const p = hopPos(e.hp, 1); e.fall = {x: p[0], y: p[1], v: 0, back: e.hp.ti < 0 || e.hp.tj < 0}; e.hp = null; }
+        else { const p = hopPos(e.hp, 1); e.fall = {x: p[0], y: p[1], v: 0, back: e.hp.ti < 0 || e.hp.tj < 0}; e.hp = null; if (e.kind === 'wolfy') sound('yelp'); }
       }
     } else if (e.hatch > 0) {
-      if ((e.hatch -= dt) <= 0) { e.kind = 'wolfy'; e.wait = WOLFY_REST; e.pop = POP_TIME; }
+      e.hatch -= dt;
+      if (!e.growled && e.hatch <= GROWL_LEAD) { e.growled = true; sound('growl'); }   // the growl ends just as the costume pops
+      if (e.hatch <= 0) { e.kind = 'wolfy'; e.wait = WOLFY_REST; e.pop = POP_TIME; }   // the costume pops (the growl has just ended; there is no howl)
     } else if ((e.wait -= dt) <= 0) decide(e);
   }
   if (cur === enemies) enemies = enemies.filter(e => !e.dead);
@@ -554,6 +607,7 @@ function updateRide(dt) {
     if (ride.t >= 1) {   // the balloon pops, and LamBert drops onto the rear stack
       const f = ridePos();
       pops.push({x: f[0], y: f[1] - A * (BALLOON_HANG + BALLOON_STRING), t: 0, color: ride.d.color});
+      sound('pop');
       ride.phase = 1; ride.y = ride.drop; ride.v = 0; balloons = balloons.filter(x => x !== ride.d);
     }
   } else {
@@ -590,6 +644,8 @@ function newLevel() { do { gen(); } while (!solvable()); levelSeed = Math.random
 
 const LAMBERT_HOP = 0.2, LAMBERT_REST = 0.2;   // hop time and pause after landing, in seconds
 let rest = 0, queued = null, ride = null, balloons = [];
+let bump = null;   // a little hop in place when he tries to hop too high: {t: 0 to 1, di, dj}
+const BUMP_TIME = 0.18;
 const BALLOON_LIFT = 1 / 4;   // the string's end hangs this far (in cubes) above the column top, so LamBert leaps up a little to grab it
 const BALLOON_TAIL = 0.8;   // before he grabs it, the string hangs this much (in cube-heights) lower than his grip, so it clearly points at the column to jump from
 const BALLOON_HANG = 0.94, BALLOON_STRING = 0.85, BALLOON_R = 0.42;   // in cube-heights: his grip above his feet; balloon centre above his grip; balloon radius
@@ -600,10 +656,14 @@ function move(di, dj) {
   if (hop || rest > 0) { queued = [di, dj]; return; }   // remember one swipe or key press
   const ni = pi + di, nj = pj + dj;
   const ok = ni >= 0 && nj >= 0 && ni < N && nj < N && h[ni][nj] > 0;
-  if (ok && h[ni][nj] - h[pi][pj] >= 2) return;   // too high to hop up: blocked
+  if (ok && h[ni][nj] - h[pi][pj] >= 2) {   // too high to hop up: he makes a little hop in place, so the player sees he tried
+    bump = {t: 0, di, dj}; facing = {away: di < 0 || dj < 0, right: dj < 0 || di > 0}; sound('blocked');
+    return;
+  }
   const balloon = balloons.find(d => d.i === pi && d.j === pj && d.dir[0] === di && d.dir[1] === dj);
   hop = {fi: pi, fj: pj, ti: ni, tj: nj, ok, t: 0, balloon, back: !balloon && (ni < 0 || nj < 0)};
   facing = {away: di < 0 || dj < 0, right: dj < 0 || di > 0};   // he turns to face the way he hops
+  sound('hop');
 }
 
 function hopPos(p, t) {
@@ -616,7 +676,7 @@ function landed() {
   if (enemies.some(e => !e.hp && !e.fall && !e.drop && e.i === pi && e.j === pj)) { die(); return; }
   if (!seen[pi][pj]) { seen[pi][pj] = true; addScore(GRASS_POINTS); }
   if (seen.every((r, i) => r.every((s, j) => s || h[i][j] === 0))) {
-    addScore(LEVEL_POINTS); pause = true; msg = 'Level clear!';
+    addScore(LEVEL_POINTS); pause = true; msg = 'Level clear!'; sound('clear');
     setTimeout(() => { level++; msg = ''; newLevel(); }, 1300);
   }
 }
@@ -624,6 +684,7 @@ function landed() {
 function update(dt) {
   for (const p of pops) p.t += dt;
   if (noticeT > 0) noticeT -= dt;
+  if (bump) { bump.t += dt / BUMP_TIME; if (bump.t >= 1) bump = null; }
   pops = pops.filter(p => p.t < .4);
   if (dying > 0) {   // frozen for a moment after being hit, then the next life starts
     dying -= dt;
@@ -637,9 +698,9 @@ function update(dt) {
   if (hop) {
     hop.t += dt / LAMBERT_HOP;
     if (hop.t >= 1) {
-      if (hop.balloon) { startRide(hop.balloon); hop = null; }
+      if (hop.balloon) { startRide(hop.balloon); hop = null; sound('grab'); }
       else if (hop.ok) { pi = hop.ti; pj = hop.tj; hop = null; rest = LAMBERT_REST; landed(); }
-      else { const p = hopPos(hop, 1); fall = {x: p[0], y: p[1], v: 0, back: hop.back}; hop = null; }
+      else { const p = hopPos(hop, 1); fall = {x: p[0], y: p[1], v: 0, back: hop.back}; hop = null; sound('fall'); }
     }
   } else if (fall) {
     fall.v += 2400 * dt; fall.y += fall.v * dt;
@@ -734,6 +795,7 @@ function drawPlayer(x, y, still) {   // (x, y) is the point where his feet touch
   else if (ride) { ears = ride.phase === 1 ? -1 : 0; if (ride.phase === 0) stretch = .08; }   // ears fly up as he drops; hanging stretches him a little
   else if (hop) { const t = Math.min(1, hop.t); stretch = .16 * Math.sin(Math.PI * t); ears = Math.cos(Math.PI * t); }
   else if (fall) ears = -1;
+  else if (bump) { stretch = .16 * Math.sin(Math.PI * bump.t); ears = Math.cos(Math.PI * bump.t); }   // the little hop in place
   else if (rest > 0) { stretch = -.14 * rest / LAMBERT_REST; ears = .5 * rest / LAMBERT_REST; }
   g.save(); g.translate(x, y); g.scale(1 - stretch * .6, 1 + stretch);
   g.fillStyle = DARK;   // legs
@@ -788,15 +850,23 @@ function drawLogo(xRight, baseY) {
   g.textAlign = 'center'; g.lineJoin = 'round'; g.lineCap = 'round';
   const widths = LETTERS.map(ch => ch === 'β' ? SIZE * .62 : g.measureText(ch).width + 1);
   const total = widths.reduce((a, b) => a + b, 0);
-  // the cloud of wool behind the letters: two rows of puffs with a solid band between them
+  // the cloud of wool behind the letters: puffs of random sizes and heights along its top and bottom edges
   const left = xRight - total - 10, right = xRight + 10, midY = baseY - CAP / 2, r1 = SIZE * .4;
-  const n = Math.round((right - left) / (r1 * 1.1));
+  const rnd = (a, b) => { const q = Math.sin(a * 91.7 + b * 47.3) * 43758.5453; return q - Math.floor(q); };   // fixed pseudo-random numbers, so the cloud never changes
+  // The cloud is narrow at both ends and puffs out in the middle: bulge(t) is about .45 at the ends and 1 in the
+  // middle (t = 0 at the left end, 1 at the right end), and it scales both the puffs' sizes and how far they sit
+  // above and below the middle line.
+  const bulge = px => .45 + .55 * Math.sin(Math.PI * Math.min(1, Math.max(0, (px - left) / (right - left))));
+  const puffs = [[left, midY, r1 * .7 * (.9 + .2 * rnd(0, 0))], [right, midY, r1 * .7 * (.9 + .2 * rnd(1, 0))]];
+  const n = Math.round((right - left) / (r1 * 1.3));
   for (let k = 0; k <= n; k++) {
-    const px = left + (right - left) * k / n, pr = r1 * (k % 2 ? .85 : 1);
-    blob(px, midY - r1 * .6, pr, '#fffdf6', '#c9c2d0'); blob(px, midY + r1 * .6, pr, '#fffdf6', '#c9c2d0');
+    const px = left + (right - left) * (k + (rnd(k, 1) - .5) * .7) / n, b = bulge(px);
+    puffs.push([px, midY, r1 * (.7 + .5 * b)]);   // a core puff on the middle line: it fills the body of the cloud
+    puffs.push([px, midY - r1 * (.3 + .5 * rnd(k, 2)) * (.4 + 1.1 * b), r1 * (.5 + .5 * rnd(k, 3)) * (.7 + .55 * b)]);   // top edge
+    puffs.push([px + (rnd(k, 4) - .5) * r1, midY + r1 * (.3 + .5 * rnd(k, 5)) * (.4 + 1.1 * b), r1 * (.5 + .5 * rnd(k, 6)) * (.7 + .55 * b)]);   // bottom edge
   }
-  blob(left, midY, r1 * .95, '#fffdf6', '#c9c2d0'); blob(right, midY, r1 * .95, '#fffdf6', '#c9c2d0');
-  g.fillStyle = '#fffdf6'; g.fillRect(left, midY - r1 * .6, right - left, r1 * 1.2);   // hides the lines between the puffs
+  for (const [px, py, pr] of puffs) blob(px, py, pr + 1.5, '#c9c2d0');   // outlines first, so only the outer edge of the cloud shows
+  for (const [px, py, pr] of puffs) blob(px, py, pr, '#fffdf6');
   let x = xRight - total;
   LETTERS.forEach((ch, i) => {
     g.save(); g.translate(x + widths[i] / 2, baseY);
@@ -852,7 +922,11 @@ function draw() {
     if (ride) { const p = ridePos(); drawPlayer(p[0], p[1]); }
     else if (hop) { const p = hopPos(hop, Math.min(1, hop.t)); drawPlayer(p[0], p[1]); }
     else if (fall) drawPlayer(fall.x, fall.y);
-    else { const p = P(pi + .5, pj + .5, h[pi][pj]); drawPlayer(p[0], p[1]); }
+    else {
+      const p = P(pi + .5, pj + .5, h[pi][pj]);
+      if (bump) { const s = Math.sin(Math.PI * bump.t); p[0] += (bump.di - bump.dj) * .866 * A * .12 * s; p[1] += (bump.di + bump.dj) * .5 * A * .12 * s - A * .3 * s; }   // a little hop toward the spot he cannot reach
+      drawPlayer(p[0], p[1]);
+    }
   };
   if (behind) drawMe();
   enemies.filter(behindWall).forEach(drawEnemy);
@@ -869,6 +943,7 @@ function draw() {
   g.fillText('Level ' + level, 14, 54);
   drawLogo(W - 24, 44);
   drawLives();
+  drawSpeaker();
   if (noticeT > 0) { g.textAlign = 'center'; g.fillStyle = '#b4531a'; g.font = 'bold 28px -apple-system,Helvetica,Arial,sans-serif'; g.lineWidth = 5; g.strokeStyle = '#ffffff'; g.strokeText(notice, W / 2, 215); g.fillText(notice, W / 2, 215); }
   g.textAlign = 'center'; g.fillStyle = '#4a6a8f'; g.font = '15px -apple-system,Helvetica,Arial,sans-serif';
   g.fillText('Hop with Q E Z C, the arrow keys, or a diagonal swipe', W / 2, H - 16);
@@ -880,11 +955,113 @@ function draw() {
   }
 }
 
+// ---- Sound: most sounds are made in code with the Web Audio API; the bleat and the growl are recorded clips (SOUND_CLIPS, at the bottom); see section 7b above ----
+const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+let savedSound = null;
+try { savedSound = localStorage.getItem('lambert-sound'); } catch (err) {}
+const audio = {ctx: null, on: savedSound ? savedSound === 'on' : !IS_TOUCH};   // on by default on a computer, off on a touch device
+const SPEAKER = {x: W - 26, y: H - 26, r: 18};   // the mute button, bottom right
+let lastBounce = 0;
+
+function unlockAudio() {   // browsers only allow sound after a key press or a touch
+  if (!audio.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) audio.ctx = new AC(); }
+  if (audio.ctx && audio.ctx.state === 'suspended') audio.ctx.resume();
+  loadClips();
+}
+
+// Recorded clips (see section 7b): SOUND_CLIPS, a block of base64 text at the very bottom of the file, holds mp3
+// recordings. They are decoded once, when sound is first unlocked, into clipBuffers (a name maps to a decoded
+// sound, or null while decoding or if decoding failed; sound() then falls back to the synthesized version).
+const clipBuffers = {};
+const SOUND_BOOST = 2.5;    // multiplies the volume of every synthesized sound (tone() and noiseBurst()); the owner found them too quiet next to the bleat. Raise or lower it to change them all at once
+const BLEAT_VOLUME = 0.2;   // volume of the recorded bleat when LamBert falls (0 to 1); the other sounds are quiet, so tune by ear
+const GROWL_VOLUME = 0.3;  // volume of the recorded growl while Wolfy's costume shakes (0 to 1)
+function loadClips() {
+  if (!audio.ctx || typeof SOUND_CLIPS === 'undefined') return;
+  for (const name in SOUND_CLIPS) {
+    if (name in clipBuffers) continue;   // already decoded or being decoded
+    clipBuffers[name] = null;
+    try {
+      const bin = atob(SOUND_CLIPS[name]), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      audio.ctx.decodeAudioData(bytes.buffer, buf => { clipBuffers[name] = buf; }, () => {});   // callback form: works in every Safari
+    } catch (err) {}
+  }
+}
+function playClip(name, vol) {   // play a recorded clip; returns false if it is not ready (the caller then uses a synthesized sound)
+  if (!audio.on || !audio.ctx || !clipBuffers[name]) return false;
+  const src = audio.ctx.createBufferSource(), gn = audio.ctx.createGain();
+  src.buffer = clipBuffers[name]; gn.gain.value = vol;
+  src.connect(gn); gn.connect(audio.ctx.destination); src.start();
+  return true;
+}
+
+function tone(f0, dur, type, vol, f1, delay) {   // a note that slides from f0 to f1 Hz and fades out
+  if (!audio.on || !audio.ctx) return;
+  const c = audio.ctx, t0 = c.currentTime + (delay || 0), o = c.createOscillator(), gn = c.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t0);
+  if (f1) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+  gn.gain.setValueAtTime(vol * SOUND_BOOST, t0); gn.gain.exponentialRampToValueAtTime(.0001, t0 + dur);
+  o.connect(gn); gn.connect(c.destination); o.start(t0); o.stop(t0 + dur + .02);
+}
+
+function noiseBurst(dur, vol, freq, delay) {   // a short puff of filtered noise (the balloon pop)
+  if (!audio.on || !audio.ctx) return;
+  const c = audio.ctx, t0 = c.currentTime + (delay || 0), len = Math.max(1, Math.floor(c.sampleRate * dur));
+  const buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = c.createBufferSource(), f = c.createBiquadFilter(), gn = c.createGain();
+  src.buffer = buf; f.type = 'bandpass'; f.frequency.value = freq; gn.gain.value = vol * SOUND_BOOST;
+  src.connect(f); f.connect(gn); gn.connect(c.destination); src.start(t0);
+}
+
+function sound(name) {
+  if (!audio.on || !audio.ctx) return;
+  switch (name) {
+    case 'hop': tone(520, .07, 'triangle', .05, 780); break;                       // LamBert's hop: a soft tick
+    case 'blocked': tone(330, .09, 'triangle', .05, 210); break;                   // he tried to hop too high: a little bonk
+    case 'bounce': { const now = performance.now(); if (now - lastBounce > 90) { lastBounce = now; tone(170, .06, 'sine', .02, 105); } break; }   // very quiet, and never more than one every 90 ms
+    case 'wolfstep': tone(120, .07, 'triangle', .035, 90); break;
+    case 'grab': tone(420, .12, 'sine', .06, 900); break;                          // grabbing the balloon string
+    case 'pop': noiseBurst(.09, .07, 1500); tone(700, .06, 'triangle', .03, 280); break;   // the balloon bursts (kept soft: not harsh)
+    case 'yelp': tone(900, .35, 'sawtooth', .04, 200); break;                      // Wolfy falls to his doom
+    case 'fall': if (!playClip('bleat', BLEAT_VOLUME)) tone(900, .55, 'sine', .07, 140); break;   // LamBert falls: a recorded bleat (the old falling whistle is only a fallback)
+    case 'growl': playClip('growl', GROWL_VOLUME); break;                          // Wolfy growls while the costume shakes (recorded only, no synthesized fallback)
+    case 'death': for (let n = 0; n < 6; n++) tone(340 + (n % 2 ? -30 : 30), .07, 'sawtooth', .045, null, n * .065); break;   // a bleat: baa
+    case 'extralife': [784, 988, 1319].forEach((f, n) => tone(f, .16, 'triangle', .08, null, n * .11)); break;
+    case 'clear': [523, 659, 784, 1047].forEach((f, n) => tone(f, .2, 'triangle', .08, null, n * .12)); break;
+  }
+}
+
+function toggleSound() {
+  audio.on = !audio.on;
+  try { localStorage.setItem('lambert-sound', audio.on ? 'on' : 'off'); } catch (err) {}
+  if (audio.on) { unlockAudio(); sound('hop'); }
+}
+
+function hitSpeaker(clientX, clientY) {   // is this screen position on the speaker button?
+  const r = cv.getBoundingClientRect(), x = (clientX - r.left) * W / r.width, y = (clientY - r.top) * H / r.height;
+  return Math.hypot(x - SPEAKER.x, y - SPEAKER.y) < SPEAKER.r;
+}
+cv.addEventListener('pointerdown', e => { unlockAudio(); if (hitSpeaker(e.clientX, e.clientY)) toggleSound(); });
+
+function drawSpeaker() {   // the mute button: a little speaker, with sound waves when the sound is on and an X when it is off
+  g.save(); g.translate(SPEAKER.x, SPEAKER.y);
+  g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.arc(0, 0, SPEAKER.r, 0, 7); g.fill();
+  g.fillStyle = '#3f343c'; g.strokeStyle = '#3f343c'; g.lineWidth = 2; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(-9, -3.5); g.lineTo(-5, -3.5); g.lineTo(0, -8); g.lineTo(0, 8); g.lineTo(-5, 3.5); g.lineTo(-9, 3.5); g.closePath(); g.fill();
+  if (audio.on) { for (const rr of [4, 8]) { g.beginPath(); g.arc(0, 0, rr + 2, -.9, .9); g.stroke(); } }
+  else { g.beginPath(); g.moveTo(4, -5); g.lineTo(11, 5); g.moveTo(11, -5); g.lineTo(4, 5); g.stroke(); }
+  g.restore();
+}
+
 // Q = up-left, E = up-right, Z = down-left, C = down-right; arrows are rotated 45 degrees
 const K = {q: [-1, 0], e: [0, -1], c: [1, 0], z: [0, 1],
            ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowRight: [1, 0], ArrowDown: [0, 1]};
 addEventListener('keydown', e => {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  unlockAudio();
+  if (k === 'm') { toggleSound(); return; }
   if (k === ' ') {
     e.preventDefault();
     if (over) startNewGame();
@@ -893,7 +1070,7 @@ addEventListener('keydown', e => {
 
 // Touch: a diagonal swipe anywhere on the screen hops in that screen direction
 let sx = 0, sy = 0, swiped = false;
-addEventListener('touchstart', e => { const t = e.touches[0]; sx = t.clientX; sy = t.clientY; swiped = false; }, {passive: true});
+addEventListener('touchstart', e => { const t = e.touches[0]; sx = t.clientX; sy = t.clientY; swiped = hitSpeaker(t.clientX, t.clientY); }, {passive: true});   // a touch on the speaker button is not a swipe
 addEventListener('touchmove', e => {
   e.preventDefault();
   if (swiped) return;
@@ -904,6 +1081,7 @@ addEventListener('touchmove', e => {
   move(d[0], d[1]);
 }, {passive: false});
 addEventListener('touchend', () => {
+  unlockAudio();
   if (!swiped && over) startNewGame();   // tap to restart
 });
 
@@ -913,5 +1091,13 @@ let last = performance.now();
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   update(dt); draw(); requestAnimationFrame(frame);
 })(last);
+</script>
+<script>
+/* Recorded sound clips, as base64 text (one mp3 per key). Used by loadClips() and playClip() in the main script.
+   Long lines of random-looking letters are normal here: do not edit them by hand. */
+const SOUND_CLIPS = {
+  bleat: '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',   // LamBert's bleat when he falls, 0.94 s, mono, 22 kHz mp3
+  growl: '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'   // Wolfy's growl while his costume shakes, 1.15 s, mono, 22 kHz mp3
+};
 </script>
 </body></html>
