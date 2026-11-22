@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Hexagon tiling puzzle. Before changing anything, read the long comment at the start of the script section below: it explains the game, the geometry and the design decisions. -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Hex-O-Gone</title>
@@ -62,396 +63,566 @@
 <div id="win"><div class="card"><b>Hexagon complete!</b><br><span id="wintxt"></span><br>Your time: <b id="wintime"></b><br><br><button id="again">Play again</button></div></div>
 <script>
 (function () {
-  // ---------- Settings ----------
-  var h = Math.sqrt(3) / 2;
-  // The whole board (and the pile icons) is turned 30 degrees clockwise on screen, so two
-  // sides of the hexagon are vertical and the board fits a portrait phone screen better.
-  var COS = Math.cos(Math.PI / 6), SIN = Math.sin(Math.PI / 6);
-  function turn(dx, dy) { return [dx * COS - dy * SIN, dx * SIN + dy * COS]; }
-  var TYPES = ["left", "middle", "right"];
-  var COLORS = { left: "#3fae4c", middle: "#d9453d", right: "#3b6fd4" };
-  var DARK   = { left: "#25692e", middle: "#8f2823", right: "#223f80" };   // computer-placed (locked) tiles
-  // For each hexagon size M: choices for how many tiles the computer gives (total is 3*M*M).
-  var GIVEN = {
-    3:  [24, 20, 16, 12, 9, 6, 3, 0],
-    4:  [44, 40, 36, 32, 28, 24, 16, 8, 0],
-    6:  [100, 90, 80, 70, 60, 48, 36, 24, 12, 0]
-  };
-  var DEFAULT = { 3: 9, 4: 16, 6: 36 };   // about 1/3 of the total
+  /* =====================================================================
+     HEXAGON TILING PUZZLE: NOTES FOR ANYONE (HUMAN OR AI) CONTINUING THIS WORK
+     =====================================================================
 
-  // ---------- Geometry ----------
-  // Triangular lattice: lattice point (i,j) sits at x = i + j/2, y = j * h.
-  // Every lattice triangle is either "A" (apex down) or "B" (apex up).
-  function cart(i, j) { return [i + 0.5 * j, j * h]; }
-  function inPoly(p, poly) {            // convex polygon, clockwise vertices
-    for (var k = 0; k < poly.length; k++) {
-      var a = poly[k], b = poly[(k + 1) % poly.length];
-      if ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) < 0) return false;
+     WHAT THIS IS
+     A one-file browser puzzle game (HTML + CSS + JavaScript, no libraries, no build
+     step, no network access, no data collection). It was designed by a parent with a
+     programming background (Java, Python) who is new to web development, in
+     conversation with Claude. It is meant to be fun for children of about 8 to 10 and
+     to run in Safari on an iPhone and on a Mac. It is hosted for free on GitHub Pages
+     (repository "games", folder "hexgame", this file named index.html).
+
+     THE PUZZLE
+     A regular hexagon is shown. Fill it completely with diamond-shaped tiles (rhombi
+     with 60 and 120 degree angles, every side one unit long). A hexagon with SIDE
+     tiles per edge needs exactly 3 * SIDE * SIDE tiles: SIDE * SIDE of each of the three
+     orientations. Sizes offered: small (SIDE 3, 27 tiles), medium (4, 48 tiles) and
+     large (6, 108 tiles). Medium is the default.
+       - The computer first places one third of the tiles. They are taken from a random
+         complete tiling, so every puzzle is solvable. They are drawn in darker colors
+         and are LOCKED (cannot be moved or removed).
+       - The player places the rest from three piles at the bottom of the screen (one
+         pile per orientation, with the number of tiles left shown under each).
+       - The goal is to finish as fast as possible. A clock in the upper left runs from
+         the moment the puzzle appears and stops on completion. The win pop-up shows the
+         time. (A percentile ranking against other players, like the Economist app game
+         "Inboxes", is a wished-for future feature; see IDEAS at the end.)
+     Controls: tap a pile to select it, then tap the hexagon to place a tile (it snaps
+     to the nearest free legal spot of that orientation). Drag one of your own tiles to
+     move it (it snaps again). Tap one of your own tiles to remove it. Dropping a dragged
+     tile onto the piles also removes it. Mouse and touch both work (pointer events).
+     "New" makes a new puzzle and restarts the clock; "Reset" removes the player's tiles
+     but keeps the clock running (so resetting cannot be used to cheat on time).
+
+     THE GEOMETRY (the key to everything)
+     1. LATTICE. All tiles live on a triangular lattice. Lattice point (i, j) is at
+        plane position x = i + j/2, y = j * TRIANGLE_HEIGHT (see latticeToPlane). The unit
+        equilateral triangles between lattice points come in two kinds: "A" (apex down)
+        and "B" (apex up). Triangle A(i,j) has corners (i,j), (i+1,j), (i,j+1). Triangle
+        B(i,j) has corners (i+1,j), (i+1,j+1), (i,j+1). Each is identified by a string
+        key such as "A3,-1".
+     2. TILES. A tile is exactly two edge-sharing triangles, so there are three
+        orientations (see tileCorners and tileTriangleKeys). Their names describe how
+        they look ON SCREEN after the board is turned 30 degrees: "middle" has a
+        horizontal long axis (red), "left" leans like "/" (green), "right" leans like
+        "\" (blue). The name/color pairs are fixed: left green, middle red, right blue.
+        (In early versions the board was not turned and "middle" was vertical. When the
+        board was turned, the type names were permuted so that the middle pile still
+        shows the horizontal tile. Pile icons are drawn with the same turn as the board
+        so each icon looks exactly like its placed tiles.)
+     3. THE BOARD. A hexagon with side SIDE, specified in plane coordinates by
+        hexagonCorners. A triangle belongs to the board if its centroid is inside. A
+        "snap spot" is a (type, i, j) whose two triangles are both on the board. Placing
+        a tile = claiming its two triangles; overlap checking is just "are those two
+        triangle keys free?" (see occupiedTriangles). A tiling is complete when the
+        number of placed tiles equals totalTiles (each covers 2 of the 6*SIDE*SIDE
+        triangles, and the pile limits force the right mix).
+     4. THREE COORDINATE SPACES. Lattice (i, j) integers; "plane" (x, y) in units of one
+        tile edge, un-turned; "screen" pixels, which add a 30 degree clockwise turn about
+        the board center and a scale of pixelsPerUnit. Convert with planeToScreen and
+        screenToPlane. The turn exists because it makes two hexagon edges vertical, so
+        the board can be about 15 percent larger on a portrait phone screen.
+
+     RANDOM PUZZLES (generateRandomTiling)
+     Start from a simple tiling (three big SIDE x SIDE rhombi meeting at the center,
+     one orientation each), then apply thousands of random "flips": around an interior
+     lattice point, six triangles form a small hexagon; if they are currently covered by
+     three tiles, re-pair them the other way. In the stacked-cubes picture this adds or
+     removes one cube. The flip chain is symmetric and connected, so it samples
+     (approximately) uniformly among all tilings. 30000 flips takes a fraction of a
+     second even for the large board. Then the tiles are shuffled and the first
+     givenCount are locked. Fewer given tiles = harder puzzle: the original developer's
+     11-year-old found the medium puzzle with 16 given tiles solvable once she knew
+     "the trick", which is why a harder mode or other tuning may be wanted.
+
+     DESIGN DECISIONS AND THEIR REASONS
+     - Single HTML file: trivial to host (GitHub Pages) and to hand to another chat.
+     - Everything (board, piles, timer) is drawn on one <canvas>; input uses pointer
+       events with touch-action: none so one code path serves mouse and touch.
+     - A tap on a tile (no movement beyond 6 px) removes it; a longer press-and-move
+       drags it. Locked tiles ignore input. The hover preview shows only for mouse.
+     - The pile row is never wider than the hexagon (looked too stretched on desktop).
+     - The win pop-up appears 0.5 s after completion so the player can admire the board;
+       the clock stops immediately so the delay does not count against the player.
+     - Light and dark themes come from CSS variables (--bg etc.), read by readThemeColors.
+     - A "number of tiles given" drop-down (<select id="n">) exists but is hidden with
+       the hidden attribute; the computer always gives one third (DEFAULT_GIVEN_TILES).
+       All the code for the drop-down is still present: remove the hidden attribute.
+     - Rejected or deferred: App Store release (fees, review, and strict rules for
+       children's apps and ads); ad-supported web page (small revenue, child-directed
+       ad restrictions). It is a free hobby game.
+     - Verification approach used during development: run the script under Node with a
+       stubbed DOM and check, for every size, that a generated full tiling covers all
+       6*SIDE*SIDE triangles with no overlap and SIDE*SIDE tiles of each type.
+
+     IDEAS NOT YET DONE
+     - Percentile ranking against other players: needs a small online service to store
+       times, and probably a daily puzzle that is the same for everyone (replace
+       Math.random in puzzle generation with a seeded random number generator).
+     - Add-to-Home-Screen polish: apple-mobile-web-app-capable meta tag, app title,
+       an icon. Pause the clock when the page is hidden. An undo button.
+     - Optional 3D shading (the tilings look like stacked cubes), white tiles with black
+       borders, harder levels, sound.
+
+     CODE MAP (in order): constants; lattice geometry helpers; buildBoard (board data
+     for one size); generateRandomTiling; game state and rules; drawing; input; start-up.
+     ===================================================================== */
+
+  // ---------- Constants ----------
+  var TRIANGLE_HEIGHT = Math.sqrt(3) / 2;   // height of a unit equilateral triangle
+
+  // The whole board and the pile icons are turned 30 degrees clockwise on screen.
+  var BOARD_TURN_COS = Math.cos(Math.PI / 6), BOARD_TURN_SIN = Math.sin(Math.PI / 6);
+  function rotateByBoardTurn(dx, dy) {
+    return [dx * BOARD_TURN_COS - dy * BOARD_TURN_SIN, dx * BOARD_TURN_SIN + dy * BOARD_TURN_COS];
+  }
+
+  var TILE_TYPES = ["left", "middle", "right"];   // also the left-to-right order of the piles
+  var TILE_COLORS        = { left: "#3fae4c", middle: "#d9453d", right: "#3b6fd4" };
+  var LOCKED_TILE_COLORS = { left: "#25692e", middle: "#8f2823", right: "#223f80" };   // computer-placed tiles
+  // For each hexagon size (tiles per side): choices for how many tiles the computer
+  // places (the total is 3 * side * side), and the default (about one third).
+  var GIVEN_TILE_CHOICES = {
+    3: [24, 20, 16, 12, 9, 6, 3, 0],
+    4: [44, 40, 36, 32, 28, 24, 16, 8, 0],
+    6: [100, 90, 80, 70, 60, 48, 36, 24, 12, 0]
+  };
+  var DEFAULT_GIVEN_TILES = { 3: 9, 4: 16, 6: 36 };
+
+  // ---------- Lattice geometry helpers ----------
+  function latticeToPlane(i, j) { return [i + 0.5 * j, j * TRIANGLE_HEIGHT]; }
+
+  // Is the point inside a convex polygon whose corners are listed clockwise (y down)?
+  function pointInConvexPolygon(point, polygon) {
+    for (var k = 0; k < polygon.length; k++) {
+      var from = polygon[k], to = polygon[(k + 1) % polygon.length];
+      var cross = (to[0] - from[0]) * (point[1] - from[1]) - (to[1] - from[1]) * (point[0] - from[0]);
+      if (cross < 0) return false;
     }
     return true;
   }
-  function centroid(pts) {
-    var x = 0, y = 0;
-    pts.forEach(function (p) { x += p[0]; y += p[1]; });
-    return [x / pts.length, y / pts.length];
+  function centroidOf(points) {
+    var sumX = 0, sumY = 0;
+    points.forEach(function (point) { sumX += point[0]; sumY += point[1]; });
+    return [sumX / points.length, sumY / points.length];
   }
-  // A tile = two adjacent triangles. Corner points and triangle keys per orientation.
-  function poly(t, i, j) {
-    if (t === "right")  return [cart(i, j), cart(i + 1, j), cart(i + 1, j + 1), cart(i, j + 1)];
-    if (t === "middle") return [cart(i, j), cart(i + 1, j), cart(i, j + 1), cart(i - 1, j + 1)];
-    return [cart(i + 1, j), cart(i + 1, j + 1), cart(i, j + 2), cart(i, j + 1)];
+  // Corner points (plane coordinates, clockwise) of the tile of this type anchored at (i, j).
+  function tileCorners(type, i, j) {
+    if (type === "right")  return [latticeToPlane(i, j), latticeToPlane(i + 1, j), latticeToPlane(i + 1, j + 1), latticeToPlane(i, j + 1)];
+    if (type === "middle") return [latticeToPlane(i, j), latticeToPlane(i + 1, j), latticeToPlane(i, j + 1), latticeToPlane(i - 1, j + 1)];
+    return [latticeToPlane(i + 1, j), latticeToPlane(i + 1, j + 1), latticeToPlane(i, j + 2), latticeToPlane(i, j + 1)];   // "left"
   }
-  function keys(t, i, j) {
-    if (t === "right")  return ["A" + i + "," + j, "B" + i + "," + j];
-    if (t === "middle") return ["A" + i + "," + j, "B" + (i - 1) + "," + j];
-    return ["B" + i + "," + j, "A" + i + "," + (j + 1)];
+  // The two triangle keys a tile covers. Must stay consistent with tileCorners.
+  function tileTriangleKeys(type, i, j) {
+    if (type === "right")  return ["A" + i + "," + j, "B" + i + "," + j];
+    if (type === "middle") return ["A" + i + "," + j, "B" + (i - 1) + "," + j];
+    return ["B" + i + "," + j, "A" + i + "," + (j + 1)];   // "left"
   }
-  function triCentroid(k, a, b) {
-    return centroid(k === "A" ? [cart(a, b), cart(a + 1, b), cart(a, b + 1)]
-                              : [cart(a + 1, b), cart(a + 1, b + 1), cart(a, b + 1)]);
+  function triangleCentroid(kind, i, j) {   // kind is "A" or "B"
+    return centroidOf(kind === "A"
+      ? [latticeToPlane(i, j), latticeToPlane(i + 1, j), latticeToPlane(i, j + 1)]
+      : [latticeToPlane(i + 1, j), latticeToPlane(i + 1, j + 1), latticeToPlane(i, j + 1)]);
   }
-  function sortedKey(pts) {
-    return pts.map(function (p) { return p[0].toFixed(2) + "," + p[1].toFixed(2); }).sort().join("|");
+  // A lookup key for a set of corner points, independent of their order.
+  function cornersKey(points) {
+    return points.map(function (point) { return point[0].toFixed(2) + "," + point[1].toFixed(2); }).sort().join("|");
   }
 
-  // Everything that depends on the hexagon size M is rebuilt by build(M).
-  var M, PER, TOTAL, CTR, HEX, inside, tris, cands, byCorners, byTris, rings;
+  // ---------- Board data (rebuilt whenever the hexagon size changes) ----------
+  var hexSide;              // tiles per hexagon edge (3, 4 or 6)
+  var tilesPerType;         // hexSide * hexSide
+  var totalTiles;           // 3 * hexSide * hexSide
+  var boardCenter;          // plane coordinates of the hexagon center (a lattice point)
+  var hexagonCorners;       // plane coordinates of the 6 hexagon corners, clockwise
+  var triangleOnBoard;      // set of keys ("A1,2") of triangles inside the hexagon
+  var allTriangles;         // corner lists of those triangles (used to draw the faint grid)
+  var snapSpots;            // every legal tile position: {type, i, j, center}
+  var spotByCorners;        // cornersKey of a tile's corners -> snap spot
+  var spotByTriangles;      // sorted pair of triangle keys joined by "|" -> snap spot
+  var vertexRings;          // for each interior lattice point: its 6 triangle keys in circular order
 
-  function build(m) {
-    M = m; PER = M * M; TOTAL = 3 * PER; CTR = [M / 2, M * h];
-    // Flat-top hexagon with side M, clockwise on screen.
-    HEX = [[0, 0], [M, 0], [1.5 * M, M * h], [M, 2 * M * h], [0, 2 * M * h], [-M / 2, M * h]];
-    inside = {}; tris = []; cands = []; byCorners = {}; byTris = {}; rings = [];
-    var lo = -M - 2, hi = M + 2, jhi = 2 * M + 2, i, j;
+  function buildBoard(side) {
+    hexSide = side; tilesPerType = side * side; totalTiles = 3 * tilesPerType;
+    boardCenter = [side / 2, side * TRIANGLE_HEIGHT];
+    var tall = side * TRIANGLE_HEIGHT;
+    hexagonCorners = [[0, 0], [side, 0], [1.5 * side, tall], [side, 2 * tall], [0, 2 * tall], [-side / 2, tall]];
+    triangleOnBoard = {}; allTriangles = []; snapSpots = []; spotByCorners = {}; spotByTriangles = {}; vertexRings = [];
+    // Lattice index ranges that comfortably cover the hexagon.
+    var iMin = -side - 2, iMax = side + 2, jMin = -2, jMax = 2 * side + 2;
+    var i, j;
 
-    // The 6*M*M small triangles inside the hexagon.
-    for (i = lo; i <= hi; i++) for (j = -2; j <= jhi; j++) {
-      var A = [cart(i, j), cart(i + 1, j), cart(i, j + 1)];
-      var B = [cart(i + 1, j), cart(i + 1, j + 1), cart(i, j + 1)];
-      if (inPoly(centroid(A), HEX)) { inside["A" + i + "," + j] = 1; tris.push(A); }
-      if (inPoly(centroid(B), HEX)) { inside["B" + i + "," + j] = 1; tris.push(B); }
+    // The 6*side*side small triangles inside the hexagon.
+    for (i = iMin; i <= iMax; i++) for (j = jMin; j <= jMax; j++) {
+      var downTriangle = [latticeToPlane(i, j), latticeToPlane(i + 1, j), latticeToPlane(i, j + 1)];
+      var upTriangle = [latticeToPlane(i + 1, j), latticeToPlane(i + 1, j + 1), latticeToPlane(i, j + 1)];
+      if (pointInConvexPolygon(centroidOf(downTriangle), hexagonCorners)) { triangleOnBoard["A" + i + "," + j] = true; allTriangles.push(downTriangle); }
+      if (pointInConvexPolygon(centroidOf(upTriangle), hexagonCorners)) { triangleOnBoard["B" + i + "," + j] = true; allTriangles.push(upTriangle); }
     }
-    // Every spot a tile may snap to (both triangles inside the hexagon).
-    TYPES.forEach(function (t) {
-      for (var i = lo; i <= hi; i++) for (var j = -2; j <= jhi; j++) {
-        var k = keys(t, i, j);
-        if (inside[k[0]] && inside[k[1]]) {
-          var c = { t: t, i: i, j: j, c: centroid(poly(t, i, j)) };
-          cands.push(c);
-          byCorners[sortedKey(poly(t, i, j))] = c;
-          byTris[k.slice().sort().join("|")] = c;
+    // Every spot a tile may snap to: both of its triangles are on the board.
+    TILE_TYPES.forEach(function (type) {
+      for (var i = iMin; i <= iMax; i++) for (var j = jMin; j <= jMax; j++) {
+        var keys = tileTriangleKeys(type, i, j);
+        if (triangleOnBoard[keys[0]] && triangleOnBoard[keys[1]]) {
+          var spot = { type: type, i: i, j: j, center: centroidOf(tileCorners(type, i, j)) };
+          snapSpots.push(spot);
+          spotByCorners[cornersKey(tileCorners(type, i, j))] = spot;
+          spotByTriangles[keys.slice().sort().join("|")] = spot;
         }
       }
     });
-    // For each interior lattice point: its 6 surrounding triangles, in circular order.
-    for (i = lo; i <= hi; i++) for (j = -2; j <= jhi; j++) {
-      var vtx = cart(i, j);
+    // For each interior lattice point: the 6 triangles around it, sorted by angle.
+    for (i = iMin; i <= iMax; i++) for (j = jMin; j <= jMax; j++) {
+      var vertex = latticeToPlane(i, j);
       var ring = [["A", i, j], ["A", i - 1, j], ["A", i, j - 1], ["B", i - 1, j], ["B", i - 1, j - 1], ["B", i, j - 1]]
-        .map(function (x) {
-          var c = triCentroid(x[0], x[1], x[2]);
-          return { key: x[0] + x[1] + "," + x[2], ang: Math.atan2(c[1] - vtx[1], c[0] - vtx[0]) };
+        .map(function (triangle) {
+          var center = triangleCentroid(triangle[0], triangle[1], triangle[2]);
+          return { key: triangle[0] + triangle[1] + "," + triangle[2], angle: Math.atan2(center[1] - vertex[1], center[0] - vertex[0]) };
         });
-      if (ring.every(function (r) { return inside[r.key]; })) {
-        ring.sort(function (a, b) { return a.ang - b.ang; });
-        rings.push(ring.map(function (r) { return r.key; }));
+      if (ring.every(function (entry) { return triangleOnBoard[entry.key]; })) {
+        ring.sort(function (a, b) { return a.angle - b.angle; });
+        vertexRings.push(ring.map(function (entry) { return entry.key; }));
       }
     }
   }
 
   // ---------- Random tiling generator ----------
-  // Start from one easy tiling, then apply many random "flips". A flip takes the 6
-  // triangles around an interior lattice point; if they form 3 tiles (a little hexagon),
-  // re-pair them the other way (like adding or removing one cube in a stack of cubes).
-  function randomTiling(flips) {
-    var owner = {}, list = [];
-    function add(c) {
-      var t = { t: c.t, i: c.i, j: c.j };
-      list.push(t);
-      keys(c.t, c.i, c.j).forEach(function (k) { owner[k] = t; });
+  // Returns a complete random tiling as a list of tiles {type, i, j}. See the notes at the top.
+  function generateRandomTiling(flipCount) {
+    var tileOwningTriangle = {}, tilesInTiling = [];
+    function addTile(spot) {
+      var tile = { type: spot.type, i: spot.i, j: spot.j };
+      tilesInTiling.push(tile);
+      tileTriangleKeys(tile.type, tile.i, tile.j).forEach(function (key) { tileOwningTriangle[key] = tile; });
     }
-    function drop(t) {
-      list.splice(list.indexOf(t), 1);
-      keys(t.t, t.i, t.j).forEach(function (k) { delete owner[k]; });
+    function removeTile(tile) {
+      tilesInTiling.splice(tilesInTiling.indexOf(tile), 1);
+      tileTriangleKeys(tile.type, tile.i, tile.j).forEach(function (key) { delete tileOwningTriangle[key]; });
     }
-    // Starting tiling: three big MxM rhombi meeting at the center, one orientation each.
-    var C = [0, M], dirs = [[0, -1], [1, 0], [-1, 1]];
-    for (var r = 0; r < 3; r++) {
-      var p = dirs[r], q = dirs[(r + 1) % 3];
-      for (var a = 0; a < M; a++) for (var b = 0; b < M; b++) {
-        var oi = C[0] + a * p[0] + b * q[0], oj = C[1] + a * p[1] + b * q[1];
-        add(byCorners[sortedKey([cart(oi, oj), cart(oi + p[0], oj + p[1]),
-          cart(oi + p[0] + q[0], oj + p[1] + q[1]), cart(oi + q[0], oj + q[1])])]);
+    // Starting tiling: three big rhombi meeting at the hexagon center, one orientation each.
+    var centerLattice = [0, hexSide];
+    var stepDirections = [[0, -1], [1, 0], [-1, 1]];   // lattice steps from the center toward every other hexagon corner
+    for (var rhombus = 0; rhombus < 3; rhombus++) {
+      var stepA = stepDirections[rhombus], stepB = stepDirections[(rhombus + 1) % 3];
+      for (var a = 0; a < hexSide; a++) for (var b = 0; b < hexSide; b++) {
+        var originI = centerLattice[0] + a * stepA[0] + b * stepB[0];
+        var originJ = centerLattice[1] + a * stepA[1] + b * stepB[1];
+        addTile(spotByCorners[cornersKey([
+          latticeToPlane(originI, originJ),
+          latticeToPlane(originI + stepA[0], originJ + stepA[1]),
+          latticeToPlane(originI + stepA[0] + stepB[0], originJ + stepA[1] + stepB[1]),
+          latticeToPlane(originI + stepB[0], originJ + stepB[1])])]);
       }
     }
-    for (var n = 0; n < flips; n++) {
-      var rg = rings[Math.floor(Math.random() * rings.length)];
-      var o = [];
-      for (var x = 0; x < 6; x++) o.push(owner[rg[x]]);
-      var s;
-      if (o[0] === o[1] && o[2] === o[3] && o[4] === o[5]) s = 1;
-      else if (o[1] === o[2] && o[3] === o[4] && o[5] === o[0]) s = 0;
-      else continue;
-      o.filter(function (t, k) { return o.indexOf(t) === k; }).forEach(drop);
-      for (var m = 0; m < 3; m++) {
-        var k1 = rg[(s + 2 * m) % 6], k2 = rg[(s + 2 * m + 1) % 6];
-        add(byTris[[k1, k2].sort().join("|")]);
+    // Random flips.
+    for (var flip = 0; flip < flipCount; flip++) {
+      var ring = vertexRings[Math.floor(Math.random() * vertexRings.length)];
+      var owners = [];
+      for (var side = 0; side < 6; side++) owners.push(tileOwningTriangle[ring[side]]);
+      // The ring is covered by three tiles in one of two ways: pairs (0,1)(2,3)(4,5) or (1,2)(3,4)(5,0).
+      var newPairingOffset;
+      if (owners[0] === owners[1] && owners[2] === owners[3] && owners[4] === owners[5]) newPairingOffset = 1;
+      else if (owners[1] === owners[2] && owners[3] === owners[4] && owners[5] === owners[0]) newPairingOffset = 0;
+      else continue;   // not flippable right now
+      owners.filter(function (tile, index) { return owners.indexOf(tile) === index; }).forEach(removeTile);
+      for (var pair = 0; pair < 3; pair++) {
+        var firstKey = ring[(newPairingOffset + 2 * pair) % 6], secondKey = ring[(newPairingOffset + 2 * pair + 1) % 6];
+        addTile(spotByTriangles[[firstKey, secondKey].sort().join("|")]);
       }
     }
-    return list;
+    return tilesInTiling;
   }
 
   // ---------- Game state ----------
-  var tiles = [];          // placed tiles: {t, i, j, locked}
-  var startN = 16;         // how many tiles the computer places
-  var selected = null;     // selected pile type
-  var drag = null;         // {tile, off, sx, sy, moved} while pressing on a placed tile
-  var ptr = null;          // pointer position (lattice coordinates)
-  var ghost = null;        // snap preview for mouse hover
+  var tiles = [];              // placed tiles: {type, i, j, locked}
+  var givenCount = 16;         // how many tiles the computer places (locked)
+  var selectedPileType = null; // which pile is selected, or null
+  var dragState = null;        // while pressing a tile: {tile, grabOffset, startX, startY, moved}
+  var pointerPos = null;       // last pointer position, in plane coordinates
+  var hoverPreview = null;     // snap spot previewed under the mouse (mouse only)
   var won = false;
-  var startTime = Date.now(), finalMs = 0, winTimer = null;   // stopwatch: starts when a puzzle appears, stops on a win
+  var puzzleStartTime = Date.now();   // the stopwatch starts when a puzzle appears
+  var finalTimeMs = 0;                // frozen when the puzzle is completed
+  var winPopupTimer = null;           // pending 0.5 s delay before the win pop-up
 
-  function remaining(t) {
-    var n = 0;
-    tiles.forEach(function (x) { if (x.t === t) n++; });
-    return PER - n;
+  function tilesLeftInPile(type) {
+    var placed = 0;
+    tiles.forEach(function (tile) { if (tile.type === type) placed++; });
+    return tilesPerType - placed;
   }
-  function occupied(except) {
-    var o = {};
-    tiles.forEach(function (x) {
-      if (x !== except) keys(x.t, x.i, x.j).forEach(function (k) { o[k] = 1; });
+  // Set of triangle keys covered by tiles, optionally ignoring one tile (the one being moved).
+  function occupiedTriangles(exceptTile) {
+    var occupied = {};
+    tiles.forEach(function (tile) {
+      if (tile !== exceptTile) tileTriangleKeys(tile.type, tile.i, tile.j).forEach(function (key) { occupied[key] = true; });
     });
-    return o;
+    return occupied;
   }
-  // Nearest free snap spot of this orientation to point p (within 1 unit), or null.
-  function snap(type, p, except) {
-    var o = occupied(except), best = null, bd = 1.0;
-    cands.forEach(function (c) {
-      if (c.t !== type) return;
-      var k = keys(c.t, c.i, c.j);
-      if (o[k[0]] || o[k[1]]) return;
-      var d = Math.hypot(c.c[0] - p[0], c.c[1] - p[1]);
-      if (d < bd) { bd = d; best = c; }
+  // The free snap spot of this type nearest to a plane point, within 1 unit, or null.
+  function findSnapSpot(type, point, exceptTile) {
+    var occupied = occupiedTriangles(exceptTile), best = null, bestDistance = 1.0;
+    snapSpots.forEach(function (spot) {
+      if (spot.type !== type) return;
+      var keys = tileTriangleKeys(spot.type, spot.i, spot.j);
+      if (occupied[keys[0]] || occupied[keys[1]]) return;
+      var distance = Math.hypot(spot.center[0] - point[0], spot.center[1] - point[1]);
+      if (distance < bestDistance) { bestDistance = distance; best = spot; }
     });
     return best;
   }
   function newPuzzle() {
-    var full = randomTiling(30000);   // a complete random tiling
-    for (var k = full.length - 1; k > 0; k--) {          // shuffle, then lock the first startN
-      var r = Math.floor(Math.random() * (k + 1)), tmp = full[k]; full[k] = full[r]; full[r] = tmp;
+    var fullTiling = generateRandomTiling(30000);
+    for (var k = fullTiling.length - 1; k > 0; k--) {   // shuffle, then lock the first givenCount
+      var other = Math.floor(Math.random() * (k + 1)), swap = fullTiling[k];
+      fullTiling[k] = fullTiling[other]; fullTiling[other] = swap;
     }
-    tiles = full.slice(0, startN).map(function (t) { t.locked = true; return t; });
-    startTime = Date.now();
-    clearState(); draw();
+    tiles = fullTiling.slice(0, givenCount).map(function (tile) { tile.locked = true; return tile; });
+    puzzleStartTime = Date.now();
+    clearTransientState(); drawScene();
   }
-  function reset() {
-    tiles = tiles.filter(function (t) { return t.locked; });
-    clearState(); draw();
+  function resetPuzzle() {   // keep the computer's tiles, remove the player's; the clock keeps running
+    tiles = tiles.filter(function (tile) { return tile.locked; });
+    clearTransientState(); drawScene();
   }
-  function clearState() {
-    selected = null; drag = null; ghost = null; won = false;
-    clearTimeout(winTimer);
+  function clearTransientState() {
+    selectedPileType = null; dragState = null; hoverPreview = null; won = false;
+    clearTimeout(winPopupTimer);
     document.getElementById("win").style.display = "none";
   }
-  function fmt(ms) {                          // milliseconds -> m:ss
-    var s = Math.floor(ms / 1000);
-    return Math.floor(s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60);
+  function formatTime(milliseconds) {   // e.g. 125000 -> "2:05"
+    var seconds = Math.floor(milliseconds / 1000);
+    return Math.floor(seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") + (seconds % 60);
   }
   function checkWin() {
-    if (tiles.length === TOTAL) {
+    if (tiles.length === totalTiles) {
       won = true;
-      finalMs = Date.now() - startTime;
-      document.getElementById("wintxt").textContent = "All " + TOTAL + " tiles fit.";
-      document.getElementById("wintime").textContent = fmt(finalMs);
-      winTimer = setTimeout(function () {   // the clock has already stopped; this just lets the player admire the board
+      finalTimeMs = Date.now() - puzzleStartTime;   // the clock stops now
+      document.getElementById("wintxt").textContent = "All " + totalTiles + " tiles fit.";
+      document.getElementById("wintime").textContent = formatTime(finalTimeMs);
+      winPopupTimer = setTimeout(function () {      // delay only the pop-up, not the clock
         document.getElementById("win").style.display = "flex";
       }, 500);
     }
   }
-  function setSize(m) {          // change hexagon size and start a new puzzle
-    build(m);
-    startN = DEFAULT[m];
-    var sel = document.getElementById("n");
-    sel.innerHTML = "";
-    GIVEN[m].forEach(function (v) {
-      var op = document.createElement("option");
-      op.value = v; op.textContent = v + " given";
-      sel.appendChild(op);
+  function setBoardSize(side) {   // change the hexagon size and start a new puzzle
+    buildBoard(side);
+    givenCount = DEFAULT_GIVEN_TILES[side];
+    var givenSelect = document.getElementById("n");   // the (currently hidden) "number given" drop-down
+    givenSelect.innerHTML = "";
+    GIVEN_TILE_CHOICES[side].forEach(function (count) {
+      var option = document.createElement("option");
+      option.value = count; option.textContent = count + " given";
+      givenSelect.appendChild(option);
     });
-    sel.value = String(startN);
-    resize();
+    givenSelect.value = String(givenCount);
+    resizeCanvas();
     newPuzzle();
   }
 
   // ---------- Drawing ----------
-  var cv = document.getElementById("c"), ctx = cv.getContext("2d");
-  var W, H, u, cx, cy, pileH, pileW, pileL, col = {};
+  var canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
+  var canvasWidth, canvasHeight;       // in CSS pixels
+  var pixelsPerUnit;                   // screen pixels per tile edge length
+  var boardCenterX, boardCenterY;      // screen position of the hexagon center
+  var pileAreaHeight;                  // height of the strip at the bottom holding the piles
+  var pileRowWidth, pileRowLeft;       // the three piles share this span (never wider than the hexagon)
+  var themeColors = {};                // read from the CSS variables: fg, hex, grid, sel
 
-  function refreshColors() {
-    var s = getComputedStyle(document.documentElement);
-    ["fg", "hex", "grid", "sel"].forEach(function (n) { col[n] = s.getPropertyValue("--" + n).trim(); });
+  function readThemeColors() {
+    var style = getComputedStyle(document.documentElement);
+    ["fg", "hex", "grid", "sel"].forEach(function (name) { themeColors[name] = style.getPropertyValue("--" + name).trim(); });
   }
-  function resize() {
-    var dpr = window.devicePixelRatio || 1;
-    W = cv.clientWidth; H = cv.clientHeight;
-    cv.width = W * dpr; cv.height = H * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    pileH = Math.max(96, Math.min(150, H * 0.2));
-    u = Math.min((W - 24) / (2 * M * h), (H - pileH - 60) / (2 * M));   // pixels per unit
-    cx = W / 2; cy = 52 + (H - pileH - 60) / 2;                        // hexagon center
-    pileW = Math.min(W, 2 * M * h * u); pileL = cx - pileW / 2;   // piles are never wider than the hexagon
-    refreshColors();
-    draw();
+  function resizeCanvas() {
+    var devicePixelRatio = window.devicePixelRatio || 1;   // sharp drawing on high-density screens
+    canvasWidth = canvas.clientWidth; canvasHeight = canvas.clientHeight;
+    canvas.width = canvasWidth * devicePixelRatio; canvas.height = canvasHeight * devicePixelRatio;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    pileAreaHeight = Math.max(96, Math.min(150, canvasHeight * 0.2));
+    // After the 30 degree turn the hexagon is (2 * side * TRIANGLE_HEIGHT) wide and (2 * side) tall.
+    // 12 px side margins; 60 px reserved at the top for the timer and buttons.
+    pixelsPerUnit = Math.min((canvasWidth - 24) / (2 * hexSide * TRIANGLE_HEIGHT), (canvasHeight - pileAreaHeight - 60) / (2 * hexSide));
+    boardCenterX = canvasWidth / 2;
+    boardCenterY = 52 + (canvasHeight - pileAreaHeight - 60) / 2;
+    pileRowWidth = Math.min(canvasWidth, 2 * hexSide * TRIANGLE_HEIGHT * pixelsPerUnit);
+    pileRowLeft = boardCenterX - pileRowWidth / 2;
+    readThemeColors();
+    drawScene();
   }
-  function toScreen(p) { var r = turn(p[0] - CTR[0], p[1] - CTR[1]); return [cx + r[0] * u, cy + r[1] * u]; }
-  function toCart(x, y) {
-    var dx = (x - cx) / u, dy = (y - cy) / u;     // undo the 30 degree turn
-    return [CTR[0] + dx * COS + dy * SIN, CTR[1] - dx * SIN + dy * COS];
+  function planeToScreen(point) {
+    var turned = rotateByBoardTurn(point[0] - boardCenter[0], point[1] - boardCenter[1]);
+    return [boardCenterX + turned[0] * pixelsPerUnit, boardCenterY + turned[1] * pixelsPerUnit];
+  }
+  function screenToPlane(screenX, screenY) {   // inverse of planeToScreen
+    var dx = (screenX - boardCenterX) / pixelsPerUnit, dy = (screenY - boardCenterY) / pixelsPerUnit;
+    return [boardCenter[0] + dx * BOARD_TURN_COS + dy * BOARD_TURN_SIN, boardCenter[1] - dx * BOARD_TURN_SIN + dy * BOARD_TURN_COS];
   }
 
-  function path(pts) {
+  function tracePolygon(points) {
     ctx.beginPath();
-    pts.forEach(function (p, k) { if (k) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); });
+    points.forEach(function (point, index) { if (index) ctx.lineTo(point[0], point[1]); else ctx.moveTo(point[0], point[1]); });
     ctx.closePath();
   }
-  // Path for a rectangle with rounded corners (radius r).
-  function roundRect(x, y, w, h, r) {
+  function traceRoundedRect(x, y, width, height, radius) {
     ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + width, y, x + width, y + height, radius);
+    ctx.arcTo(x + width, y + height, x, y + height, radius);
+    ctx.arcTo(x, y + height, x, y, radius);
+    ctx.arcTo(x, y, x + width, y, radius);
     ctx.closePath();
   }
-  function drawTile(pts, t, alpha, locked) {
+  // Fill and outline one tile given its corners in screen pixels.
+  function drawTile(screenCorners, type, alpha, locked) {
     ctx.globalAlpha = alpha || 1;
-    path(pts);
-    ctx.fillStyle = (locked ? DARK : COLORS)[t]; ctx.fill();
+    tracePolygon(screenCorners);
+    ctx.fillStyle = (locked ? LOCKED_TILE_COLORS : TILE_COLORS)[type]; ctx.fill();
     ctx.lineWidth = 1.5; ctx.lineJoin = "round"; ctx.strokeStyle = "#000"; ctx.stroke();
     ctx.globalAlpha = 1;
   }
 
-  function draw() {
-    if (!HEX) return;
-    ctx.clearRect(0, 0, W, H);
+  function drawScene() {
+    if (!hexagonCorners) return;   // the board has not been built yet
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
-    // Hexagon background, faint snap grid, outline
-    path(HEX.map(toScreen)); ctx.fillStyle = col.hex; ctx.fill();
-    ctx.lineWidth = 1; ctx.strokeStyle = col.grid;
-    tris.forEach(function (v) { path(v.map(toScreen)); ctx.stroke(); });
-    path(HEX.map(toScreen)); ctx.lineWidth = 3; ctx.strokeStyle = col.fg; ctx.stroke();
+    // Hexagon background, faint grid of the small triangles (shows the snap lattice), outline.
+    tracePolygon(hexagonCorners.map(planeToScreen)); ctx.fillStyle = themeColors.hex; ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = themeColors.grid;
+    allTriangles.forEach(function (triangle) { tracePolygon(triangle.map(planeToScreen)); ctx.stroke(); });
+    tracePolygon(hexagonCorners.map(planeToScreen)); ctx.lineWidth = 3; ctx.strokeStyle = themeColors.fg; ctx.stroke();
 
-    // Placed tiles (a tile being dragged is drawn last, on top)
-    var dragging = drag && drag.moved;
-    tiles.forEach(function (t) {
-      if (dragging && drag.tile === t) return;
-      drawTile(poly(t.t, t.i, t.j).map(toScreen), t.t, 1, t.locked);
+    // Placed tiles. A tile that is being dragged is drawn last, on top, at the pointer.
+    var isDragging = dragState && dragState.moved;
+    tiles.forEach(function (tile) {
+      if (isDragging && dragState.tile === tile) return;
+      drawTile(tileCorners(tile.type, tile.i, tile.j).map(planeToScreen), tile.type, 1, tile.locked);
     });
-    if (ghost && !drag) drawTile(poly(ghost.t, ghost.i, ghost.j).map(toScreen), ghost.t, 0.45);
-    if (dragging && ptr) {
-      var t = drag.tile, c = centroid(poly(t.t, t.i, t.j));
-      var dx = ptr[0] - drag.off[0] - c[0], dy = ptr[1] - drag.off[1] - c[1];
-      drawTile(poly(t.t, t.i, t.j).map(function (p) { return toScreen([p[0] + dx, p[1] + dy]); }), t.t, 0.9);
+    if (hoverPreview && !dragState) {
+      drawTile(tileCorners(hoverPreview.type, hoverPreview.i, hoverPreview.j).map(planeToScreen), hoverPreview.type, 0.45);
+    }
+    if (isDragging && pointerPos) {
+      var dragged = dragState.tile, draggedCenter = centroidOf(tileCorners(dragged.type, dragged.i, dragged.j));
+      var shiftX = pointerPos[0] - dragState.grabOffset[0] - draggedCenter[0];
+      var shiftY = pointerPos[1] - dragState.grabOffset[1] - draggedCenter[1];
+      drawTile(tileCorners(dragged.type, dragged.i, dragged.j).map(function (corner) {
+        return planeToScreen([corner[0] + shiftX, corner[1] + shiftY]);
+      }), dragged.type, 0.9);
     }
 
-    // Timer
-    ctx.fillStyle = col.fg; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    // Timer (upper left).
+    ctx.fillStyle = themeColors.fg; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     ctx.font = "600 18px ui-monospace, Menlo, monospace";
-    ctx.fillText(fmt(won ? finalMs : Date.now() - startTime), 14, 28);
+    ctx.fillText(formatTime(won ? finalTimeMs : Date.now() - puzzleStartTime), 14, 28);
 
-    // Piles
-    var s = (pileH - 44) / 1.8;
-    var iconY = H - 30 - (pileH - 30) / 2;
-    TYPES.forEach(function (t, k) {
-      var x = pileL + pileW * (k + 0.5) / 3, n = remaining(t);
-      if (selected === t) {
-        roundRect(x - pileW / 6 + 6, H - pileH + 4, pileW / 3 - 12, pileH - 8, 14);
-        ctx.fillStyle = col.sel; ctx.fill();
-        ctx.lineWidth = 3; ctx.strokeStyle = col.fg; ctx.stroke();
+    // The three piles: tile icon (drawn with the same turn as the board), stack effect, count, highlight.
+    var iconScale = (pileAreaHeight - 44) / 1.8;
+    var iconCenterY = canvasHeight - 30 - (pileAreaHeight - 30) / 2;
+    TILE_TYPES.forEach(function (type, pileIndex) {
+      var pileCenterX = pileRowLeft + pileRowWidth * (pileIndex + 0.5) / 3, tilesLeft = tilesLeftInPile(type);
+      if (selectedPileType === type) {
+        traceRoundedRect(pileCenterX - pileRowWidth / 6 + 6, canvasHeight - pileAreaHeight + 4, pileRowWidth / 3 - 12, pileAreaHeight - 8, 14);
+        ctx.fillStyle = themeColors.sel; ctx.fill();
+        ctx.lineWidth = 3; ctx.strokeStyle = themeColors.fg; ctx.stroke();
       }
-      var base = poly(t, 0, 0), c = centroid(base);
-      var pts = base.map(function (p) { var r = turn(p[0] - c[0], p[1] - c[1]);   /* same 30 degree turn as the board */ return [x + r[0] * s, iconY + r[1] * s]; });
-      if (n > 1) drawTile(pts.map(function (p) { return [p[0] + 4, p[1] + 4]; }), t, 0.6);
-      drawTile(pts, t, n > 0 ? 1 : 0.25);
-      ctx.fillStyle = col.fg; ctx.textAlign = "center";
+      var uprightCorners = tileCorners(type, 0, 0), uprightCenter = centroidOf(uprightCorners);
+      var iconCorners = uprightCorners.map(function (corner) {
+        var turned = rotateByBoardTurn(corner[0] - uprightCenter[0], corner[1] - uprightCenter[1]);
+        return [pileCenterX + turned[0] * iconScale, iconCenterY + turned[1] * iconScale];
+      });
+      if (tilesLeft > 1) drawTile(iconCorners.map(function (corner) { return [corner[0] + 4, corner[1] + 4]; }), type, 0.6);
+      drawTile(iconCorners, type, tilesLeft > 0 ? 1 : 0.25);
+      ctx.fillStyle = themeColors.fg; ctx.textAlign = "center";
       ctx.font = "700 20px -apple-system, Arial, sans-serif";
-      ctx.fillText(String(n), x, H - 14);
+      ctx.fillText(String(tilesLeft), pileCenterX, canvasHeight - 14);
     });
   }
 
   // ---------- Input (mouse and touch via pointer events) ----------
-  function pos(e) {
-    var r = cv.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  function pointerPosition(event) {   // pixel position relative to the canvas
+    var box = canvas.getBoundingClientRect();
+    return { x: event.clientX - box.left, y: event.clientY - box.top };
   }
 
-  cv.addEventListener("pointerdown", function (e) {
+  canvas.addEventListener("pointerdown", function (event) {
     if (won) return;
-    var m = pos(e);
-    cv.setPointerCapture(e.pointerId);
+    var pointer = pointerPosition(event);
+    canvas.setPointerCapture(event.pointerId);
 
-    if (m.y > H - pileH) {                       // tapped a pile
-      var t = TYPES[Math.max(0, Math.min(2, Math.floor((m.x - pileL) / (pileW / 3))))];
-      if (remaining(t) > 0) selected = (selected === t) ? null : t;
-      ghost = null; draw(); return;
+    // 1. Tapped the pile strip: select (or deselect) a pile.
+    if (pointer.y > canvasHeight - pileAreaHeight) {
+      var pileIndex = Math.max(0, Math.min(2, Math.floor((pointer.x - pileRowLeft) / (pileRowWidth / 3))));
+      var type = TILE_TYPES[pileIndex];
+      if (tilesLeftInPile(type) > 0) selectedPileType = (selectedPileType === type) ? null : type;
+      hoverPreview = null; drawScene(); return;
     }
-    var p = toCart(m.x, m.y); ptr = p;
-    for (var n = tiles.length - 1; n >= 0; n--) { // pressed a placed tile: drag it, or tap to remove it
-      var tl = tiles[n];
-      if (inPoly(p, poly(tl.t, tl.i, tl.j))) {
-        if (tl.locked) { draw(); return; }        // computer-placed tiles cannot be changed
-        var c = centroid(poly(tl.t, tl.i, tl.j));
-        drag = { tile: tl, off: [p[0] - c[0], p[1] - c[1]], sx: m.x, sy: m.y, moved: false };
-        ghost = null; draw(); return;
+    var planePoint = screenToPlane(pointer.x, pointer.y); pointerPos = planePoint;
+
+    // 2. Pressed a placed tile (topmost first): start a drag, which becomes a tap-to-remove if it never moves.
+    for (var index = tiles.length - 1; index >= 0; index--) {
+      var tile = tiles[index];
+      if (pointInConvexPolygon(planePoint, tileCorners(tile.type, tile.i, tile.j))) {
+        if (tile.locked) { drawScene(); return; }   // computer-placed tiles cannot be changed
+        var tileCenter = centroidOf(tileCorners(tile.type, tile.i, tile.j));
+        dragState = { tile: tile, grabOffset: [planePoint[0] - tileCenter[0], planePoint[1] - tileCenter[1]],
+                      startX: pointer.x, startY: pointer.y, moved: false };
+        hoverPreview = null; drawScene(); return;
       }
     }
-    if (selected) {                               // tapped empty space: place a tile
-      var spot = snap(selected, p, null);
+    // 3. Tapped empty space with a pile selected: place a tile at the nearest free spot.
+    if (selectedPileType) {
+      var spot = findSnapSpot(selectedPileType, planePoint, null);
       if (spot) {
-        tiles.push({ t: selected, i: spot.i, j: spot.j });
-        if (remaining(selected) === 0) selected = null;
-        ghost = null; checkWin();
+        tiles.push({ type: selectedPileType, i: spot.i, j: spot.j });
+        if (tilesLeftInPile(selectedPileType) === 0) selectedPileType = null;
+        hoverPreview = null; checkWin();
       }
     }
-    draw();
+    drawScene();
   });
 
-  cv.addEventListener("pointermove", function (e) {
-    var m = pos(e); ptr = toCart(m.x, m.y);
-    if (drag && !drag.moved && Math.hypot(m.x - drag.sx, m.y - drag.sy) > 6) drag.moved = true;
-    if (!drag && selected && e.pointerType === "mouse" && m.y < H - pileH) ghost = snap(selected, ptr, null);
-    else if (!drag) ghost = null;
-    draw();
-  });
-
-  cv.addEventListener("pointerup", function (e) {
-    if (!drag) return;
-    var m = pos(e); ptr = toCart(m.x, m.y);
-    var t = drag.tile;
-    if (!drag.moved) {                                              // a tap: remove the tile
-      tiles.splice(tiles.indexOf(t), 1);
-    } else {
-      var target = [ptr[0] - drag.off[0], ptr[1] - drag.off[1]];
-      var spot = snap(t.t, target, t);
-      if (spot) { t.i = spot.i; t.j = spot.j; }
-      else if (m.y > H - pileH) tiles.splice(tiles.indexOf(t), 1);  // dropped on the piles: return it
+  canvas.addEventListener("pointermove", function (event) {
+    var pointer = pointerPosition(event); pointerPos = screenToPlane(pointer.x, pointer.y);
+    // Movement of more than 6 px turns a press on a tile into a real drag (otherwise it is a tap).
+    if (dragState && !dragState.moved && Math.hypot(pointer.x - dragState.startX, pointer.y - dragState.startY) > 6) dragState.moved = true;
+    if (!dragState && selectedPileType && event.pointerType === "mouse" && pointer.y < canvasHeight - pileAreaHeight) {
+      hoverPreview = findSnapSpot(selectedPileType, pointerPos, null);
+    } else if (!dragState) {
+      hoverPreview = null;
     }
-    drag = null; checkWin(); draw();
+    drawScene();
   });
-  cv.addEventListener("pointercancel", function () { drag = null; draw(); });
-  cv.addEventListener("pointerleave", function () { if (!drag) { ghost = null; draw(); } });
 
-  document.getElementById("reset").addEventListener("click", reset);
+  canvas.addEventListener("pointerup", function (event) {
+    if (!dragState) return;
+    var pointer = pointerPosition(event); pointerPos = screenToPlane(pointer.x, pointer.y);
+    var tile = dragState.tile;
+    if (!dragState.moved) {
+      tiles.splice(tiles.indexOf(tile), 1);   // a tap removes the tile
+    } else {
+      var tileTarget = [pointerPos[0] - dragState.grabOffset[0], pointerPos[1] - dragState.grabOffset[1]];
+      var spot = findSnapSpot(tile.type, tileTarget, tile);
+      if (spot) { tile.i = spot.i; tile.j = spot.j; }
+      else if (pointer.y > canvasHeight - pileAreaHeight) tiles.splice(tiles.indexOf(tile), 1);   // dropped on the piles: return it
+      // otherwise the tile springs back to where it was
+    }
+    dragState = null; checkWin(); drawScene();
+  });
+  canvas.addEventListener("pointercancel", function () { dragState = null; drawScene(); });
+  canvas.addEventListener("pointerleave", function () { if (!dragState) { hoverPreview = null; drawScene(); } });
+
+  // ---------- Start-up ----------
+  document.getElementById("reset").addEventListener("click", resetPuzzle);
   document.getElementById("new").addEventListener("click", newPuzzle);
   document.getElementById("again").addEventListener("click", newPuzzle);
-  document.getElementById("m").addEventListener("change", function (e) { setSize(parseInt(e.target.value, 10)); });
-  document.getElementById("n").addEventListener("change", function (e) {
-    startN = parseInt(e.target.value, 10); newPuzzle();
+  document.getElementById("m").addEventListener("change", function (event) { setBoardSize(parseInt(event.target.value, 10)); });
+  document.getElementById("n").addEventListener("change", function (event) {   // the hidden "number given" drop-down
+    givenCount = parseInt(event.target.value, 10); newPuzzle();
   });
-  window.addEventListener("resize", resize);
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { refreshColors(); draw(); });
-  setInterval(function () { if (!won) draw(); }, 250);   // keep the timer ticking
-  setSize(4);
+  window.addEventListener("resize", resizeCanvas);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { readThemeColors(); drawScene(); });
+  setInterval(function () { if (!won) drawScene(); }, 250);   // keep the timer ticking
+  setBoardSize(4);   // start with the medium board
 })();
 </script>
 </body>
